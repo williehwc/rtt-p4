@@ -3,6 +3,11 @@
 #include <v1model.p4>
 
 const bit<16> TYPE_IPV4 = 0x800;
+const bit<8> TYPE_TCP = 6;
+const bit<32> TABLE_SIZE = 1024;
+const bit<16> HASH_BASE = 16;
+
+#define TIMESTAMP_BITS 32
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -33,14 +38,41 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
+/* TCP Header */
+header tcp_t {
+    bit<16> srcPort;
+    bit<16> dstPort;
+    bit<32> seqNo;
+    bit<32> ackNo;
+    bit<4>  dataOffset;
+    bit<3>  res;
+    bit<3>  ecn;
+    bit<6>  ctrl;
+    bit<16> window;
+    bit<16> checksum;
+    bit<16> urgentPtr;
+}
+
 struct metadata {
-    /* empty */
+    bit<16> hash_key;
+	bit<32> outgoing_timestamp;
+	bit<32> rtt;
 }
 
 struct headers {
     ethernet_t   ethernet;
     ipv4_t       ipv4;
+	tcp_t		tcp;
 }
+
+
+/*************************************************************************
+*********************** R E G I S T E R S  *****************************
+*************************************************************************/
+
+/* register array to store timestamps */
+register<bit<TIMESTAMP_BITS>>(TABLE_SIZE) timestamps;
+
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -65,6 +97,15 @@ parser MyParser(packet_in packet,
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
+        /* check to see if tcp packet */
+		transition select(hdr.ipv4.protocol) {
+			TYPE_TCP: parse_tcp;
+			default: accept;
+		}
+    }
+	
+    state parse_tcp {
+        packet.extract(hdr.tcp);
         transition accept;
     }
 
@@ -83,9 +124,35 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 **************  I N G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
 
+
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
+	
+	/* hash seq number into hash_key */
+	action get_key(){
+		hash(meta.hash_key,
+			HashAlgorithm.crc16,
+			HASH_BASE,
+			hdr.tcp.seqNo,
+			TABLE_SIZE);
+		
+	}
+	
+	/* push timestamp into table with hashed key as index */
+	action push_outgoing_timestamp(){	
+		get_key();
+		timestamps.write((bit<32>)meta.hash_key, standard_metadata.enq_timestamp);
+	}
+	
+	/* read timestamp from table and subtract from current time to get rtt*/
+	action get_rtt(){
+		get_key();
+		timestamps.read(meta.outgoing_timestamp, (bit<32>) meta.hash_key);
+		meta.rtt = standard_metadata.enq_timestamp - meta.outgoing_timestamp;
+	}
+	
+	
     action drop() {
         mark_to_drop();
     }

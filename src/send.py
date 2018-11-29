@@ -60,7 +60,7 @@ def main():
 
     if len(sys.argv) < 2:
         print 'Pass 1 argument: <max_seq_no>'
-        #exit(1)
+        exit(1)
 
     send_packet(random_string(num_chars_per_packet), 0)
 

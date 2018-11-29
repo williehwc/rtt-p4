@@ -30,6 +30,28 @@
         "dstAddr": "00:00:00:00:01:02",
         "port": 2
       }
+    },
+    {
+      "table": "MyIngress.tcp_flag_match",
+      "default_action": true,
+      "action_name": "MyIngress.write_timestamp",
+      "action_params": { }
+    },
+    {
+      "table": "MyIngress.tcp_flag_match",
+      "match": {
+        "hdr.tcp.ctrl": 16
+      },
+      "action_name": "MyIngress.write_timestamp",
+      "action_params": { }
+    },
+    {
+      "table": "MyIngress.tcp_flag_match",
+      "match": {
+        "hdr.tcp.ctrl": 4
+      },
+      "action_name": "NoAction",
+      "action_params": { }
     }
   ]
 }

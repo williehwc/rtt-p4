@@ -7,7 +7,7 @@ const bit<8> TYPE_TCP = 0x6;
 const bit<32> TABLE_SIZE = 1024;
 const bit<16> HASH_BASE = 16;
 
-#define TIMESTAMP_BITS 32
+#define TIMESTAMP_BITS 48
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -55,8 +55,8 @@ header tcp_t {
 
 struct metadata {
     bit<16> hash_key;
-    bit<32> outgoing_timestamp;
-    bit<32> rtt;
+    bit<TIMESTAMP_BITS> outgoing_timestamp;
+    bit<TIMESTAMP_BITS> rtt;
 }
 
 struct headers {
@@ -142,14 +142,14 @@ control MyIngress(inout headers hdr,
     /* push timestamp into table with hashed key as index */
     action push_outgoing_timestamp(){    
         get_key();
-        timestamps.write((bit<32>)meta.hash_key, standard_metadata.enq_timestamp);
+        timestamps.write((bit<32>)meta.hash_key, standard_metadata.ingress_global_timestamp);
     }
     
     /* read timestamp from table and subtract from current time to get rtt*/
     action get_rtt(){
         get_key();
         timestamps.read(meta.outgoing_timestamp, (bit<32>) meta.hash_key);
-        meta.rtt = standard_metadata.enq_timestamp - meta.outgoing_timestamp;
+        meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
     }
     
     

@@ -2,6 +2,7 @@
 import sys
 import struct
 import os
+import time
 
 from scapy.all import sniff, sendp, hexdump, get_if_list, get_if_hwaddr
 from scapy.all import Ether, IP, TCP
@@ -31,6 +32,7 @@ def handle_packet(packet):
         sys.stdout.flush()
         # Send ACK
         print "Sending ACK"
+        time.sleep(.5)
         ack_packet = Ether(src = get_if_hwaddr(iface), dst = 'ff:ff:ff:ff:ff:ff')
         ack_packet = ack_packet / IP(src = packet[IP].dst, dst = packet[IP].src)
         ack_packet = ack_packet / TCP(sport = packet[TCP].dport, dport = packet[TCP].sport,

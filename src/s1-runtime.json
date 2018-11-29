@@ -34,7 +34,7 @@
     {
       "table": "MyIngress.tcp_flag_match",
       "default_action": true,
-      "action_name": "MyIngress.write_timestamp",
+      "action_name": "MyIngress.push_outgoing_timestamp",
       "action_params": { }
     },
     {
@@ -42,7 +42,7 @@
       "match": {
         "hdr.tcp.ctrl": 16
       },
-      "action_name": "MyIngress.write_timestamp",
+      "action_name": "MyIngress.get_rtt",
       "action_params": { }
     },
     {

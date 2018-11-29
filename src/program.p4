@@ -134,7 +134,7 @@ control MyIngress(inout headers hdr,
 		hash(meta.hash_key,
 			HashAlgorithm.crc16,
 			HASH_BASE,
-			hdr.tcp.seqNo,
+			{hdr.tcp.seqNo},
 			TABLE_SIZE);
 		
 	}
@@ -150,6 +150,8 @@ control MyIngress(inout headers hdr,
 		get_key();
 		timestamps.read(meta.outgoing_timestamp, (bit<32>) meta.hash_key);
 		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
+		// Write RTT to source MAC address
+		hdr.ethernet.srcAddr = meta.rtt;
 	}
 	
 	
@@ -166,11 +168,12 @@ control MyIngress(inout headers hdr,
 			hdr.tcp.ctrl: exact;
 		}
 		actions = {
-			write_timestamp;
+			push_outgoing_timestamp;
+			get_rtt;
 			NoAction;
 		}
 		size = 2;
-		default_action = write_timestamp();
+		default_action = push_outgoing_timestamp();
 	}
 	
 	action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {

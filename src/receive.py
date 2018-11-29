@@ -6,7 +6,7 @@ import os
 from scapy.all import sniff, sendp, hexdump, get_if_list, get_if_hwaddr
 from scapy.all import Ether, IP, TCP
 
-this_ip = {"h1-eth0": "10.0.1.1", "h2-eth0": "10.0.2.2"}
+this_ip = {"h1-eth0": "10.0.1.1", "h2-eth0": "10.0.1.2"}
 min_port_no = 49152
 
 def get_if():

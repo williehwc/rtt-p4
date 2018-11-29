@@ -7,6 +7,6 @@
         "s1": { "runtime_json" : "s1-runtime.json" }
     },
     "links": [
-        ["h1", "s1"], ["s1", "h2"]
+        ["h1", "s1"], ["h2", "s1"]
     ]
 }

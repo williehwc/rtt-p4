@@ -3,7 +3,7 @@
 #include <v1model.p4>
 
 const bit<16> TYPE_IPV4 = 0x800;
-const bit<8> TYPE_TCP = 6;
+const bit<8> TYPE_TCP = 0x6;
 const bit<32> TABLE_SIZE = 1024;
 const bit<16> HASH_BASE = 16;
 
@@ -55,14 +55,14 @@ header tcp_t {
 
 struct metadata {
     bit<16> hash_key;
-	bit<32> outgoing_timestamp;
-	bit<32> rtt;
+    bit<32> outgoing_timestamp;
+    bit<32> rtt;
 }
 
 struct headers {
     ethernet_t   ethernet;
     ipv4_t       ipv4;
-	tcp_t		tcp;
+    tcp_t        tcp;
 }
 
 
@@ -98,12 +98,12 @@ parser MyParser(packet_in packet,
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
         /* check to see if tcp packet */
-		transition select(hdr.ipv4.protocol) {
-			TYPE_TCP: parse_tcp;
-			default: accept;
-		}
+        transition select(hdr.ipv4.protocol) {
+            TYPE_TCP: parse_tcp;
+            default: accept;
+        }
     }
-	
+
     state parse_tcp {
         packet.extract(hdr.tcp);
         transition accept;
@@ -128,31 +128,31 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
-	
-	/* hash seq number into hash_key */
-	action get_key(){
-		hash(meta.hash_key,
-			HashAlgorithm.crc16,
-			HASH_BASE,
-			hdr.tcp.seqNo,
-			TABLE_SIZE);
-		
-	}
-	
-	/* push timestamp into table with hashed key as index */
-	action push_outgoing_timestamp(){	
-		get_key();
-		timestamps.write((bit<32>)meta.hash_key, standard_metadata.enq_timestamp);
-	}
-	
-	/* read timestamp from table and subtract from current time to get rtt*/
-	action get_rtt(){
-		get_key();
-		timestamps.read(meta.outgoing_timestamp, (bit<32>) meta.hash_key);
-		meta.rtt = standard_metadata.enq_timestamp - meta.outgoing_timestamp;
-	}
-	
-	
+    
+    /* hash seq number into hash_key */
+    action get_key(){
+        hash(meta.hash_key,
+            HashAlgorithm.crc16,
+            HASH_BASE,
+            hdr.tcp.seqNo,
+            TABLE_SIZE);
+        
+    }
+    
+    /* push timestamp into table with hashed key as index */
+    action push_outgoing_timestamp(){    
+        get_key();
+        timestamps.write((bit<32>)meta.hash_key, standard_metadata.enq_timestamp);
+    }
+    
+    /* read timestamp from table and subtract from current time to get rtt*/
+    action get_rtt(){
+        get_key();
+        timestamps.read(meta.outgoing_timestamp, (bit<32>) meta.hash_key);
+        meta.rtt = standard_metadata.enq_timestamp - meta.outgoing_timestamp;
+    }
+    
+    
     action drop() {
         mark_to_drop();
     }
@@ -200,10 +200,10 @@ control MyEgress(inout headers hdr,
 
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
      apply {
-	update_checksum(
-	    hdr.ipv4.isValid(),
+    update_checksum(
+        hdr.ipv4.isValid(),
             { hdr.ipv4.version,
-	      hdr.ipv4.ihl,
+          hdr.ipv4.ihl,
               hdr.ipv4.diffserv,
               hdr.ipv4.totalLen,
               hdr.ipv4.identification,
@@ -226,6 +226,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.ipv4);
+        packet.emit(hdr.tcp);
     }
 }
 

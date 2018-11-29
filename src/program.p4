@@ -157,13 +157,20 @@ control MyIngress(inout headers hdr,
         mark_to_drop();
     }
     
+	action write_timestamp(bit<48> timestamp){
+		hdr.ethernet.srcAddr = timestamp;
+	}
+	
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
         standard_metadata.egress_spec = port;
         hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+		
+		/* changing source mac address to timestamp */
+		write_timestamp(standard_metadata.ingress_global_timestamp);
     }
-    
+
     table ipv4_lpm {
         key = {
             hdr.ipv4.dstAddr: lpm;

@@ -8,6 +8,7 @@ const bit<32> TABLE_SIZE = 1024;
 const bit<16> HASH_BASE = 16;
 
 #define TIMESTAMP_BITS 48
+#define TUPLE_BITS 128
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -53,11 +54,21 @@ header tcp_t {
 	bit<16> urgentPtr;
 }
 
+struct tuple_t {
+	ip4Addr_t srcAddr;
+	ip4Addr_t dstAddr;
+	bit<16> srtPort;
+	bit<16> dstPort;
+	bit<32> seqNo;
+}
+
 struct metadata {
+	tuple_t tuple;
 	bit<16> hash_key;
 	bit<TIMESTAMP_BITS> outgoing_timestamp;
 	bit<TIMESTAMP_BITS> rtt;
 }
+
 
 struct headers {
 	ethernet_t   ethernet;
@@ -72,7 +83,8 @@ struct headers {
 
 /* register array to store timestamps */
 register<bit<TIMESTAMP_BITS>>(TABLE_SIZE) timestamps;
-
+register<bit<TUPLE_BITS>>(TABLE_SIZE) keys;
+register<bit<8>>(TABLE_SIZE) eACKs;
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -129,8 +141,18 @@ control MyIngress(inout headers hdr,
 				  inout metadata meta,
 				  inout standard_metadata_t standard_metadata) {
 	
-	/* hash seq number into hash_key */
-	action get_key(){
+	/* hash incoming tuple into key */
+	action get_key_outgoing(){
+		hash(meta.hash_key,
+			HashAlgorithm.crc16,
+			HASH_BASE,
+			{hdr.tcp.seqNo},
+			TABLE_SIZE);
+		
+	}
+	
+	/* hash ack tuple into key*/
+	action get_key_outgoing(){
 		hash(meta.hash_key,
 			HashAlgorithm.crc16,
 			HASH_BASE,
@@ -141,13 +163,13 @@ control MyIngress(inout headers hdr,
 	
 	/* push timestamp into table with hashed key as index */
 	action push_outgoing_timestamp(){	
-		get_key();
+		get_key_outgoing();
 		timestamps.write((bit<32>)meta.hash_key, standard_metadata.ingress_global_timestamp);
 	}
 	
 	/* read timestamp from table and subtract from current time to get rtt*/
 	action get_rtt(){
-		get_key();
+		get_key_ack();
 		timestamps.read(meta.outgoing_timestamp, (bit<32>) meta.hash_key);
 		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 		// Write RTT to source MAC address
@@ -159,6 +181,7 @@ control MyIngress(inout headers hdr,
 		mark_to_drop();
 	}
 	
+	/* write timestamp to src mac address */
 	action write_timestamp(){
 		hdr.ethernet.srcAddr = standard_metadata.ingress_global_timestamp;
 	}

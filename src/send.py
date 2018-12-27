@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 import argparse
 import sys
 import socket
@@ -6,6 +6,7 @@ import random
 import struct
 import string
 import os
+import colored
 
 from scapy.all import sendp, send, get_if_list, get_if_hwaddr, sniff, hexdump
 from scapy.all import Ether, IP, TCP
@@ -32,6 +33,7 @@ def random_string(length):
     return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(length))
 
 def send_packet(message, seq_no, sport, dport):
+    print colored.fg("cyan")
     iface = get_if()
     address = socket.gethostbyname(destination_ips[iface])
     print "Sending on interface %s to %s" % (iface, str(address))
@@ -39,15 +41,18 @@ def send_packet(message, seq_no, sport, dport):
     packet = packet / IP(dst = address) / TCP(dport = dport, sport = sport, seq = seq_no, flags = '') / message
     packet.show2()
     hexdump(packet)
+    print colored.attr("reset")
     sendp(packet, iface = iface, verbose = False)
 
 def handle_packet(packet, max_seq_no):
     iface = get_if()
     if (TCP in packet and packet[TCP].dport >= min_port_no
         and packet[IP].dst == this_ip[iface] and packet[TCP].flags & 0x10): # ACK
+        print colored.fg("yellow")
         print "Got an response"
         packet.show2()
         hexdump(packet)
+        print colored.attr("reset")
         sys.stdout.flush()
         # Send next packet
         next_seq = packet[TCP].ack
@@ -57,7 +62,7 @@ def handle_packet(packet, max_seq_no):
 def main():
 
     if len(sys.argv) < 2:
-        print 'Pass 1 argument: <max_seq_no>'
+        print 'Pass 1 argument: <number of packets>'
         exit(1)
 
     sport = random.randint(min_port_no, 65535)
@@ -66,7 +71,7 @@ def main():
     send_packet(random_string(num_chars_per_packet), 0, sport, dport)
 
     ifaces = filter(lambda i: 'eth' in i, os.listdir('/sys/class/net/'))
-    sniff(iface = ifaces[0], prn = lambda x: handle_packet(x, int(sys.argv[1])))
+    sniff(iface = ifaces[0], prn = lambda x: handle_packet(x, num_chars_per_packet * int(sys.argv[1]) - 1))
 
 if __name__ == '__main__':
     main()

@@ -27,6 +27,9 @@ all: run
 run: build
 	sudo python $(RUN_SCRIPT) -t $(TOPO) $(run_args)
 
+start:
+	sudo python $(RUN_SCRIPT) -t $(TOPO) $(run_args)
+
 stop:
 	sudo mn -c
 

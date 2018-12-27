@@ -63,6 +63,7 @@ struct tuple_t {
 
 struct metadata {
 	tuple_t tup;
+//	tuple_t rtup;
 	bit<32> hash_key;
 	bit<TIMESTAMP_BITS> outgoing_timestamp;
 	bit<TIMESTAMP_BITS> rtt;
@@ -83,7 +84,7 @@ struct headers {
 
 /* register array to store timestamps */
 register<bit<TIMESTAMP_BITS>>(TABLE_SIZE) timestamps;
-register<bit<TUPLE_BITS>>(TABLE_SIZE) keys;
+//register<bit<TUPLE_BITS>>(TABLE_SIZE) keys;
 register<bit<8>>(TABLE_SIZE) eACKs;
 
 /*************************************************************************
@@ -142,7 +143,7 @@ control MyIngress(inout headers hdr,
 				  inout standard_metadata_t standard_metadata) {
 
 	action set_eACK(){
-		eACK = hdr.ipv4.seqNo + ((bit<32>)(hdr.ipv4.totalLen - ((((bit<16>) hdr.ipv4.ihl) + ((bit<16>)hdr.ipv4.dataOffset)) * 16w4)))
+		meta.eACK = hdr.tcp.seqNo + ((bit<32>)(hdr.ipv4.totalLen - ((((bit<16>) hdr.ipv4.ihl) + ((bit<16>)hdr.tcp.dataOffset)) * 16w4)));
 	}
 
 	/* save metadata tuple */
@@ -185,7 +186,7 @@ control MyIngress(inout headers hdr,
 		meta.tup.seqNo = meta.eACK;
 		set_key();
 		timestamps.write(meta.hash_key, standard_metadata.ingress_global_timestamp);
-		keys.write(meta.hash_key, meta.tup);
+		//keys.write(meta.hash_key, (bit<128>)meta.tup);
 		//eACKs.write(meta.hash_key, meta.eACK);
 	}
 	
@@ -195,6 +196,7 @@ control MyIngress(inout headers hdr,
 		meta.tup.seqNo = hdr.tcp.ackNo;
 		set_key();
 		timestamps.read(meta.outgoing_timestamp, meta.hash_key);
+		//keys.read(meta.rtup, meta.hash_key);
 		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 		// Write RTT to source MAC address
 		hdr.ethernet.srcAddr = meta.rtt;

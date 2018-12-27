@@ -4,9 +4,8 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_TCP = 0x6;
-const bit<32> TABLE_SIZE = 1024;
-const bit<16> HASH_BASE = 16;
 
+#define TABLE_SIZE 32w100
 #define TIMESTAMP_BITS 48
 #define TUPLE_BITS 128
 
@@ -57,13 +56,13 @@ header tcp_t {
 struct tuple_t {
 	ip4Addr_t srcAddr;
 	ip4Addr_t dstAddr;
-	bit<16> srtPort;
+	bit<16> srcPort;
 	bit<16> dstPort;
 	bit<32> seqNo;
 }
 
 struct metadata {
-	tuple_t tuple;
+	tuple_t tup;
 	bit<16> hash_key;
 	bit<TIMESTAMP_BITS> outgoing_timestamp;
 	bit<TIMESTAMP_BITS> rtt;
@@ -140,36 +139,53 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 control MyIngress(inout headers hdr,
 				  inout metadata meta,
 				  inout standard_metadata_t standard_metadata) {
+
+	/* save metadata tuple */
+	action set_tuple(bool isOutgoing){
+		if(isOutgoing){
+			meta.tup.srcAddr = hdr.ipv4.srcAddr;
+			meta.tup.dstAddr = hdr.ipv4.dstAddr;
+			meta.tup.srcPort = hdr.tcp.srcPort;
+			meta.tup.dstPort = hdr.tcp.dstPort;
+		}else{
+			meta.tup.srcAddr = hdr.ipv4.dstAddr;
+			meta.tup.dstAddr = hdr.ipv4.srcAddr;
+			meta.tup.srcPort = hdr.tcp.dstPort;
+			meta.tup.dstPort = hdr.tcp.srcPort;
+		}
+		meta.tup.seqNo = hdr.tcp.seqNo;
+	}
 	
-	/* hash incoming tuple into key */
-	action get_key_outgoing(){
+	/* hash tuple into key */
+	action set_key(){
 		hash(meta.hash_key,
-			HashAlgorithm.crc16,
-			HASH_BASE,
-			{hdr.tcp.seqNo},
+			HashAlgorithm.crc32,
+			32w0,
+			meta.tup,
+			/*{	
+				hdr.ipv4.srcAddr,
+				hdr.ipv4.dstAddr,
+				hdr.tcp.srcPort,
+				hdr.tcp.dstPort,
+				hdr.tcp.seqNo
+			},*/
 			TABLE_SIZE);
 		
 	}
 	
-	/* hash ack tuple into key*/
-	action get_key_outgoing(){
-		hash(meta.hash_key,
-			HashAlgorithm.crc16,
-			HASH_BASE,
-			{hdr.tcp.seqNo},
-			TABLE_SIZE);
-		
-	}
 	
 	/* push timestamp into table with hashed key as index */
 	action push_outgoing_timestamp(){	
-		get_key_outgoing();
+		set_tuple(true);
+		set_key();
 		timestamps.write((bit<32>)meta.hash_key, standard_metadata.ingress_global_timestamp);
+		keys.write((bit<32>)meta.hash_key, meta.tup);
 	}
 	
 	/* read timestamp from table and subtract from current time to get rtt*/
 	action get_rtt(){
-		get_key_ack();
+		set_tuple(false);
+		set_key();
 		timestamps.read(meta.outgoing_timestamp, (bit<32>) meta.hash_key);
 		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 		// Write RTT to source MAC address

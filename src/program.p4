@@ -53,17 +53,9 @@ header tcp_t {
 	bit<16> urgentPtr;
 }
 
-struct tuple_t {
-	ip4Addr_t srcAddr;
-	ip4Addr_t dstAddr;
-	bit<16> srcPort;
-	bit<16> dstPort;
-	bit<32> seqNo;
-}
-
 struct metadata {
-	tuple_t tup;
-//	tuple_t rtup;
+	bit<TUPLE_BITS> flowID;
+	bit<TUPLE_BITS> reg_flowID;
 	bit<32> hash_key;
 	bit<TIMESTAMP_BITS> outgoing_timestamp;
 	bit<TIMESTAMP_BITS> rtt;
@@ -84,7 +76,7 @@ struct headers {
 
 /* register array to store timestamps */
 register<bit<TIMESTAMP_BITS>>(TABLE_SIZE) timestamps;
-//register<bit<TUPLE_BITS>>(TABLE_SIZE) keys;
+register<bit<TUPLE_BITS>>(TABLE_SIZE) keys;
 register<bit<8>>(TABLE_SIZE) eACKs;
 
 /*************************************************************************
@@ -143,21 +135,17 @@ control MyIngress(inout headers hdr,
 				  inout standard_metadata_t standard_metadata) {
 
 	action set_eACK(){
+		
 		meta.eACK = hdr.tcp.seqNo + ((bit<32>)(hdr.ipv4.totalLen - ((((bit<16>) hdr.ipv4.ihl) + ((bit<16>)hdr.tcp.dataOffset)) * 16w4)));
 	}
 
 	/* save metadata tuple */
-	action set_tuple(bool isOutgoing){
+	action set_flowID(bool isOutgoing){
 		if(isOutgoing){
-			meta.tup.srcAddr = hdr.ipv4.srcAddr;
-			meta.tup.dstAddr = hdr.ipv4.dstAddr;
-			meta.tup.srcPort = hdr.tcp.srcPort;
-			meta.tup.dstPort = hdr.tcp.dstPort;
+			set_eACK();
+			meta.flowID = hdr.ipv4.srcAddr ++ hdr.ipv4.dstAddr ++ hdr.tcp.srcPort ++ hdr.tcp.dstPort ++ meta.eACK;
 		}else{
-			meta.tup.srcAddr = hdr.ipv4.dstAddr;
-			meta.tup.dstAddr = hdr.ipv4.srcAddr;
-			meta.tup.srcPort = hdr.tcp.dstPort;
-			meta.tup.dstPort = hdr.tcp.srcPort;
+			meta.flowID = hdr.ipv4.dstAddr ++ hdr.ipv4.srcAddr ++ hdr.tcp.dstPort ++ hdr.tcp.srcPort ++ hdr.tcp.seqNo;
 		}
 	}
 	
@@ -166,7 +154,7 @@ control MyIngress(inout headers hdr,
 		hash(meta.hash_key,
 			HashAlgorithm.crc32,
 			32w0,
-			meta.tup,
+			{meta.flowID},
 			/*{	
 				hdr.ipv4.srcAddr,
 				hdr.ipv4.dstAddr,
@@ -180,26 +168,27 @@ control MyIngress(inout headers hdr,
 	
 	
 	/* push timestamp into table with hashed key as index */
-	action push_outgoing_timestamp(){	
-		set_tuple(true);
-		set_eACK();
-		meta.tup.seqNo = meta.eACK;
+	action push_outgoing_timestamp(){
+		set_flowID(true);
 		set_key();
 		timestamps.write(meta.hash_key, standard_metadata.ingress_global_timestamp);
-		//keys.write(meta.hash_key, (bit<128>)meta.tup);
+		keys.write(meta.hash_key, meta.flowID);
 		//eACKs.write(meta.hash_key, meta.eACK);
 	}
 	
 	/* read timestamp from table and subtract from current time to get rtt*/
 	action get_rtt(){
-		set_tuple(false);
-		meta.tup.seqNo = hdr.tcp.ackNo;
+		set_flowID(false);
 		set_key();
 		timestamps.read(meta.outgoing_timestamp, meta.hash_key);
-		//keys.read(meta.rtup, meta.hash_key);
-		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
-		// Write RTT to source MAC address
-		hdr.ethernet.srcAddr = meta.rtt;
+		keys.read(meta.reg_flowID, meta.hash_key);
+		if(meta.flowID == meta.reg_flowID){
+			meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
+			// Write RTT to source MAC address
+			hdr.ethernet.srcAddr = meta.rtt;
+		}else{
+			hdr.ethernet.srcAddr = 48w0;
+		}
 	}
 	
 	

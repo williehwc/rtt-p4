@@ -141,8 +141,8 @@ control MyIngress(inout headers hdr,
 				  inout metadata meta,
 				  inout standard_metadata_t standard_metadata) {
 
-	action set_eACK(bit<32> seqNo){
-		eACK = ((bit<32>)(hdr.ipv4.totalLen - ((((bit<16>) hdr.ipv4.ihl) + ((bit<16>)hdr.ipv4.dataOffset)) * 16w4)))
+	action set_eACK(){
+		eACK = hdr.ipv4.seqNo + ((bit<32>)(hdr.ipv4.totalLen - ((((bit<16>) hdr.ipv4.ihl) + ((bit<16>)hdr.ipv4.dataOffset)) * 16w4)))
 	}
 
 	/* save metadata tuple */
@@ -181,7 +181,8 @@ control MyIngress(inout headers hdr,
 	/* push timestamp into table with hashed key as index */
 	action push_outgoing_timestamp(){	
 		set_tuple(true);
-		meta.tup.seqNo = hdr.tcp.ackNo;
+		set_eACK();
+		meta.tup.seqNo = meta.eACK;
 		set_key();
 		timestamps.write(meta.hash_key, standard_metadata.ingress_global_timestamp);
 		keys.write(meta.hash_key, meta.tup);
@@ -191,7 +192,7 @@ control MyIngress(inout headers hdr,
 	/* read timestamp from table and subtract from current time to get rtt*/
 	action get_rtt(){
 		set_tuple(false);
-		meta.tup.seqNo = hdr.tcp.seqNo;
+		meta.tup.seqNo = hdr.tcp.ackNo;
 		set_key();
 		timestamps.read(meta.outgoing_timestamp, meta.hash_key);
 		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;

@@ -145,7 +145,7 @@ control MyIngress(inout headers hdr,
 			set_eACK();
 			meta.flowID = hdr.ipv4.srcAddr ++ hdr.ipv4.dstAddr ++ hdr.tcp.srcPort ++ hdr.tcp.dstPort ++ meta.eACK;
 		}else{
-			meta.flowID = hdr.ipv4.dstAddr ++ hdr.ipv4.srcAddr ++ hdr.tcp.dstPort ++ hdr.tcp.srcPort ++ hdr.tcp.seqNo;
+			meta.flowID = hdr.ipv4.dstAddr ++ hdr.ipv4.srcAddr ++ hdr.tcp.dstPort ++ hdr.tcp.srcPort ++ hdr.tcp.ackNo;
 		}
 	}
 	
@@ -186,6 +186,7 @@ control MyIngress(inout headers hdr,
 			meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 			// Write RTT to source MAC address
 			hdr.ethernet.srcAddr = meta.rtt;
+			//hdr.ethernet.srcAddr = meta.outgoing_timestamp;
 		}else{
 			hdr.ethernet.srcAddr = 48w0;
 		}
@@ -196,10 +197,6 @@ control MyIngress(inout headers hdr,
 		mark_to_drop();
 	}
 	
-	/* write timestamp to src mac address */
-	action write_timestamp(){
-		hdr.ethernet.srcAddr = standard_metadata.ingress_global_timestamp;
-	}
 
 	table tcp_flag_match {
 		key = {

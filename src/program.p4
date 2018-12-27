@@ -63,9 +63,10 @@ struct tuple_t {
 
 struct metadata {
 	tuple_t tup;
-	bit<16> hash_key;
+	bit<32> hash_key;
 	bit<TIMESTAMP_BITS> outgoing_timestamp;
 	bit<TIMESTAMP_BITS> rtt;
+	bit<32> eACK;
 }
 
 
@@ -140,6 +141,10 @@ control MyIngress(inout headers hdr,
 				  inout metadata meta,
 				  inout standard_metadata_t standard_metadata) {
 
+	action set_eACK(bit<32> seqNo){
+		eACK = ((bit<32>)(hdr.ipv4.totalLen - ((((bit<16>) hdr.ipv4.ihl) + ((bit<16>)hdr.ipv4.dataOffset)) * 16w4)))
+	}
+
 	/* save metadata tuple */
 	action set_tuple(bool isOutgoing){
 		if(isOutgoing){
@@ -153,7 +158,6 @@ control MyIngress(inout headers hdr,
 			meta.tup.srcPort = hdr.tcp.dstPort;
 			meta.tup.dstPort = hdr.tcp.srcPort;
 		}
-		meta.tup.seqNo = hdr.tcp.seqNo;
 	}
 	
 	/* hash tuple into key */
@@ -177,16 +181,19 @@ control MyIngress(inout headers hdr,
 	/* push timestamp into table with hashed key as index */
 	action push_outgoing_timestamp(){	
 		set_tuple(true);
+		meta.tup.seqNo = hdr.tcp.ackNo;
 		set_key();
-		timestamps.write((bit<32>)meta.hash_key, standard_metadata.ingress_global_timestamp);
-		keys.write((bit<32>)meta.hash_key, meta.tup);
+		timestamps.write(meta.hash_key, standard_metadata.ingress_global_timestamp);
+		keys.write(meta.hash_key, meta.tup);
+		//eACKs.write(meta.hash_key, meta.eACK);
 	}
 	
 	/* read timestamp from table and subtract from current time to get rtt*/
 	action get_rtt(){
 		set_tuple(false);
+		meta.tup.seqNo = hdr.tcp.seqNo;
 		set_key();
-		timestamps.read(meta.outgoing_timestamp, (bit<32>) meta.hash_key);
+		timestamps.read(meta.outgoing_timestamp, meta.hash_key);
 		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 		// Write RTT to source MAC address
 		hdr.ethernet.srcAddr = meta.rtt;

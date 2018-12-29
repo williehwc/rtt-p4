@@ -6,6 +6,7 @@ const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_TCP = 0x6;
 const bit<32> TABLE_SIZE = 1024;
 const bit<16> HASH_BASE = 16;
+const bit<32> MAX_NUM_RTTS = 128;
 
 #define TIMESTAMP_BITS 48
 
@@ -57,6 +58,7 @@ struct metadata {
 	bit<16> hash_key;
 	bit<TIMESTAMP_BITS> outgoing_timestamp;
 	bit<TIMESTAMP_BITS> rtt;
+	bit<32> rtt_index;
 }
 
 struct headers {
@@ -72,6 +74,12 @@ struct headers {
 
 /* register array to store timestamps */
 register<bit<TIMESTAMP_BITS>>(TABLE_SIZE) timestamps;
+
+/* register for current RTT register index */
+register<bit<32>>(1) current_rtt_index;
+
+/* register/array to store RTTs in the order they are computed */
+register<bit<TIMESTAMP_BITS>>(MAX_NUM_RTTS) rtts;
 
 
 /*************************************************************************
@@ -152,6 +160,10 @@ control MyIngress(inout headers hdr,
 		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 		// Write RTT to source MAC address
 		hdr.ethernet.srcAddr = meta.rtt;
+		// Write RTT to rtts register
+		current_rtt_index.read(meta.rtt_index, 0);
+		rtts.write(meta.rtt_index, meta.rtt);
+		current_rtt_index.write(0, (meta.rtt_index + 1) % MAX_NUM_RTTS);
 	}
 	
 	

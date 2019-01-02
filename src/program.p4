@@ -1,17 +1,37 @@
 /* -*- P4_16 -*- */
+
+
 #include <core.p4>
 #include <v1model.p4>
 
 
+//use to toggle support for cumulative ACKs
+#define MSS_FLAG 
+
 #define TIMESTAMP_BITS 48
 #define FLOWID_BITS 128
 
+#ifdef MSS_FLAG
+#define MSSID_BITS 96
+#endif
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_TCP = 0x6;
-const bit<32> TABLE_SIZE = 5;
-const bit<32> NUM_TABLES = 4;
-const bit<32> REGISTER_SIZE = TABLE_SIZE * (NUM_TABLES+1);
+
+#ifdef MSS_FLAG
+const bit<6>  SYN_FLAG = 6w2;
+//const bit<6>  SYN_ACK_FLAG = 6w18;
+#endif
+
+const bit<32> TABLE_SIZE = 32w5;
+
+#ifdef MSS_FLAG
+const bit<32> MSS_TABLE_SIZE = 32w100; //make sure sufficiently large to limit collisions
+#endif
+
+const bit<32> NUM_TABLES = 32w4;
+const bit<32> DROP_INDX = NUM_TABLES;
+const bit<32> REGISTER_SIZE = TABLE_SIZE * (NUM_TABLES+1); //+1 for drop table
 const bit<TIMESTAMP_BITS> LATENCY_THRESHOLD = 0x0000004C4B40; //5 seconds
 
 
@@ -59,13 +79,32 @@ header tcp_t {
 	bit<16> urgentPtr;
 }
 
+
+#ifdef MSS_FLAG
+/* TCP Options */
+/* For now we are assuming static the MSS option is immediately after the
+TCP heaer for all SYN packets */
+header tcp_mss_option_t{
+	bit<8> kind;
+	bit<8> len;
+	bit<16> mss;
+}
+#endif
+
 struct metadata {
 	bit<FLOWID_BITS> flowID;
 	bit<32> hash_key;
 	bit<TIMESTAMP_BITS> outgoing_timestamp;
 	bit<TIMESTAMP_BITS> rtt;
+	
 	bit<32> eACK;
-		
+	bit<32> payload_size;
+
+#ifdef MSS_FLAG
+	bit<MSSID_BITS> mssID; //separate identifier for MSS table
+	bit<32> mssKey;
+#endif
+
 }
 
 
@@ -73,6 +112,9 @@ struct headers {
 	ethernet_t   ethernet;
 	ipv4_t	   ipv4;
 	tcp_t		tcp;
+#ifdef MSS_FLAG
+	tcp_mss_option_t mss;
+#endif
 }
 
 
@@ -83,7 +125,12 @@ struct headers {
 /* register array to store timestamps */
 register<bit<TIMESTAMP_BITS>>(REGISTER_SIZE) timestamps;
 register<bit<FLOWID_BITS>>(REGISTER_SIZE) keys;
-register<bit<8>>(REGISTER_SIZE) eACKs;
+
+#ifdef MSS_FLAG
+register<bit<16>>(MSS_TABLE_SIZE) fourTupleMSS;
+#endif
+
+//register<bit<8>>(REGISTER_SIZE) eACKs;
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -117,8 +164,22 @@ parser MyParser(packet_in packet,
 
 	state parse_tcp {
 		packet.extract(hdr.tcp);
+		transition select(hdr.tcp.ctrl){
+#ifdef MSS_FLAG
+			SYN_FLAG : parse_mss;
+//			SYN_ACK_FLAG : parse_mss;
+#endif
+			default: accept; //everything else including ACKs
+		}
+
+	}
+
+#ifdef MSS_FLAG
+	state parse_mss {
+		packet.extract(hdr.mss);
 		transition accept;
 	}
+#endif
 
 }
 
@@ -140,15 +201,19 @@ control MyIngress(inout headers hdr,
 				  inout metadata meta,
 				  inout standard_metadata_t standard_metadata) {
 
+	/* calculate payload of tcp packet */
+	action set_payload_size(){
+		meta.payload_size = ((bit<32>)(hdr.ipv4.totalLen - ((((bit<16>) hdr.ipv4.ihl) + ((bit<16>)hdr.tcp.dataOffset)) * 16w4)));
+	}
+
+	/* set expected ACK */
 	action set_eACK(){
-		
-		meta.eACK = hdr.tcp.seqNo + ((bit<32>)(hdr.ipv4.totalLen - ((((bit<16>) hdr.ipv4.ihl) + ((bit<16>)hdr.tcp.dataOffset)) * 16w4)));
+		meta.eACK = hdr.tcp.seqNo + meta.payload_size;
 	}
 
 	/* save metadata tuple */
 	action set_flowID(bool isOutgoing){
 		if(isOutgoing){
-			set_eACK();
 			meta.flowID = hdr.ipv4.srcAddr ++ hdr.ipv4.dstAddr ++ hdr.tcp.srcPort ++ hdr.tcp.dstPort ++ meta.eACK;
 		}else{
 			meta.flowID = hdr.ipv4.dstAddr ++ hdr.ipv4.srcAddr ++ hdr.tcp.dstPort ++ hdr.tcp.srcPort ++ hdr.tcp.ackNo;
@@ -171,13 +236,45 @@ control MyIngress(inout headers hdr,
 			TABLE_SIZE);
 		
 	}
-	
-	
+
+#ifdef MSS_FLAG	
+	/* set the 4 tuple for the maximum segment size storing register */
+	action set_mssID(){
+		meta.mssID = hdr.ipv4.dstAddr ++ hdr.ipv4.srcAddr ++ hdr.tcp.dstPort ++ hdr.tcp.srcPort;
+	}
+
+	/* hash the 4 tuple into an index */
+	action set_mssKey(){
+		hash(meta.mssKey,
+			HashAlgorithm.crc32,
+			32w0,
+			{meta.mssID},
+			MSS_TABLE_SIZE);		
+	}
+	/* set MSS for SYN packets for each 4 tuple */
+	/* ideally we would have perfect hashing or dynamic hash table, because the MSS value is necessary
+		for proper operation of the rest of this approach.
+	*/
+	action push_mss(){
+		set_mssID();
+		set_mssKey();
+		
+		fourTupleMSS.write(meta.mssKey, hdr.mss.mss);
+	}
+#endif
+
 	/* push timestamp into tables with hashed key as index */
 	action push_outgoing_timestamp(){
+		set_payload_size();
+		set_eACK();
 		set_flowID(true);
 		set_key();
-		
+
+#ifdef MSS_FLAG
+		set_mssID();
+		set_mssKey();
+#endif
+
 		//hardcoded for 4 tables
 		//calculate the time difference between the current time and each of the existing timestamps at that index
 		//for each table
@@ -195,21 +292,30 @@ control MyIngress(inout headers hdr,
 		bit<TIMESTAMP_BITS> time_diff3 = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;		
 
 
-		if(time_diff0 < LATENCY_THRESHOLD){
+		if(time_diff0 < LATENCY_THRESHOLD){ //no stale packet in table 0
 			offset = TABLE_SIZE;
-			if(time_diff1 < LATENCY_THRESHOLD){
+			if(time_diff1 < LATENCY_THRESHOLD){ //no stale packet in table 1
 				offset = TABLE_SIZE * 2;
-				if(time_diff2 < LATENCY_THRESHOLD){
+				if(time_diff2 < LATENCY_THRESHOLD){ // no stale packet in table 2
 					offset = TABLE_SIZE * 3;
-					if(time_diff3 < LATENCY_THRESHOLD){
-						offset = TABLE_SIZE * 4; //essentially a drop
+					if(time_diff3 < LATENCY_THRESHOLD){ // no stale packet in table 3
+						offset = TABLE_SIZE * DROP_INDX; //essentially a drop
 					}
 				}
 			}
 		}else{
-			offset = 32w0;
+			offset = 32w0; //insert into table 0
 		}
 		
+
+#ifdef MSS_FLAG
+		//only allow packets that are full sized (=MSS) to be processed
+		bit<16> mss;
+		fourTupleMSS.read(mss, meta.mssKey);
+		if(meta.payload_size != (bit<32>) mss){
+			offset = DROP_INDX;
+		}
+#endif
 		//write to appropriate table at index
 		timestamps.write(meta.hash_key+offset, standard_metadata.ingress_global_timestamp);
 		keys.write(meta.hash_key+offset, meta.flowID);
@@ -265,6 +371,9 @@ control MyIngress(inout headers hdr,
 		actions = {
 			push_outgoing_timestamp;
 			get_rtt;
+#ifdef MSS_FLAG
+			push_mss;
+#endif
 			NoAction;
 		}
 		size = 2;
@@ -296,7 +405,11 @@ control MyIngress(inout headers hdr,
 			ipv4_lpm.apply();
 		}
 		if (hdr.tcp.isValid()) {
-			tcp_flag_match.apply();
+			if(hdr.tcp.ctrl != 4){
+				tcp_flag_match.apply();
+			}else {
+				drop();
+			}
 		}
 	}
 }
@@ -320,7 +433,7 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 	update_checksum(
 		hdr.ipv4.isValid(),
 			{ hdr.ipv4.version,
-		  hdr.ipv4.ihl,
+		  	  hdr.ipv4.ihl,
 			  hdr.ipv4.diffserv,
 			  hdr.ipv4.totalLen,
 			  hdr.ipv4.identification,
@@ -344,6 +457,9 @@ control MyDeparser(packet_out packet, in headers hdr) {
 		packet.emit(hdr.ethernet);
 		packet.emit(hdr.ipv4);
 		packet.emit(hdr.tcp);
+#ifdef MSS_FLAG
+		packet.emit(hdr.mss);
+#endif
 	}
 }
 

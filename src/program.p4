@@ -17,6 +17,9 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_TCP = 0x6;
+const bit<32> TABLE_SIZE = 1024;
+const bit<16> HASH_BASE = 16;
+const bit<32> MAX_NUM_RTTS = 128;
 
 #ifdef MSS_FLAG
 const bit<6>  SYN_FLAG = 6w2;
@@ -96,6 +99,7 @@ struct metadata {
 	bit<32> hash_key;
 	bit<TIMESTAMP_BITS> outgoing_timestamp;
 	bit<TIMESTAMP_BITS> rtt;
+	bit<32> rtt_index;
 	
 	bit<32> eACK;
 	bit<32> payload_size;
@@ -104,7 +108,6 @@ struct metadata {
 	bit<MSSID_BITS> mssID; //separate identifier for MSS table
 	bit<32> mssKey;
 #endif
-
 }
 
 
@@ -129,6 +132,12 @@ register<bit<FLOWID_BITS>>(REGISTER_SIZE) keys;
 #ifdef MSS_FLAG
 register<bit<16>>(MSS_TABLE_SIZE) fourTupleMSS;
 #endif
+
+/* register for current RTT register index */
+register<bit<32>>(1) current_rtt_index;
+
+/* register/array to store RTTs in the order they are computed */
+register<bit<TIMESTAMP_BITS>>(MAX_NUM_RTTS) rtts;
 
 //register<bit<8>>(REGISTER_SIZE) eACKs;
 
@@ -353,6 +362,10 @@ control MyIngress(inout headers hdr,
 		if(offset < TABLE_SIZE*4){
 			meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 			hdr.ethernet.srcAddr = meta.rtt;
+      // Write RTT to rtts register
+		  current_rtt_index.read(meta.rtt_index, 0);
+		  rtts.write(meta.rtt_index, meta.rtt);
+		  current_rtt_index.write(0, (meta.rtt_index + 1) % MAX_NUM_RTTS);
 		}else{
 			hdr.ethernet.srcAddr = 48w0;
 		}

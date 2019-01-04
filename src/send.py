@@ -1,77 +1,136 @@
 #!/usr/bin/env python2
-import argparse
-import sys
-import socket
-import random
-import struct
-import string
-import os
-import colored
+import argparse, random, math, os, socket, colored, string, time, logging
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+from scapy.all import sendp, get_if_hwaddr, sniff, hexdump
+from scapy.all import Ether, IP, TCP, Raw
 
-from scapy.all import sendp, send, get_if_list, get_if_hwaddr, sniff, hexdump
-from scapy.all import Ether, IP, TCP
+THIS_IP = {"h1-eth0": "10.0.1.1", "h2-eth0": "10.0.1.2"}
+DEST_IP = {"h1-eth0": "10.0.1.2", "h2-eth0": "10.0.1.1"}
 
-this_ip = {"h1-eth0": "10.0.1.1", "h2-eth0": "10.0.1.2"}
-destination_ips = {"h1-eth0": "10.0.1.2", "h2-eth0": "10.0.1.1"}
-num_chars_per_packet = 10
-min_port_no = 49152
-
-def get_if():
-    ifs=get_if_list()
-    iface=None # "h1-eth0"
-    for i in get_if_list():
-        if "eth0" in i:
-            iface=i
-            break;
-    if not iface:
-        print "Cannot find eth0 interface"
-        exit(1)
-    return iface
+MIN_PORT_NO = 49152
+MAX_PORT_NO = 2**16 # Exclusive
+MAX_SEQ_NO  = 2**32 # Exclusive
 
 def random_string(length):
     # Source: https://stackoverflow.com/questions/2257441
     return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(length))
 
-def send_packet(message, seq_no, sport, dport):
-    print colored.fg("cyan")
-    iface = get_if()
-    address = socket.gethostbyname(destination_ips[iface])
-    print "Sending on interface %s to %s" % (iface, str(address))
-    packet = Ether(src = get_if_hwaddr(iface), dst = 'ff:ff:ff:ff:ff:ff')
-    packet = packet / IP(dst = address) / TCP(dport = dport, sport = sport, seq = seq_no, flags = '') / message
-    packet.show2()
-    hexdump(packet)
-    print colored.attr("reset")
-    sendp(packet, iface = iface, verbose = False)
-
-def handle_packet(packet, max_seq_no):
-    iface = get_if()
-    if (TCP in packet and packet[TCP].dport >= min_port_no
-        and packet[IP].dst == this_ip[iface] and packet[TCP].flags & 0x10): # ACK
-        print colored.fg("yellow")
-        print "Got an response"
-        packet.show2()
-        hexdump(packet)
+def print_pkt(args, pkt, inbound):
+    color = "cyan"
+    if inbound:
+        color = "yellow"
+    if args.print_pkt:
+        print colored.fg(color)
+        pkt.show2()
+        hexdump(pkt)
         print colored.attr("reset")
-        sys.stdout.flush()
-        # Send next packet
-        next_seq = packet[TCP].ack
-        if next_seq <= max_seq_no:
-            send_packet(random_string(num_chars_per_packet), next_seq, packet[TCP].dport, packet[TCP].sport)
+    else:
+        if inbound:
+            print "IN  " + str(pkt[TCP].dport) + "<-" + str(pkt[TCP].sport),
+        else:
+            print "OUT " + str(pkt[TCP].sport) + "->" + str(pkt[TCP].dport),
+        print " Seq: " + ("%10s" % pkt[TCP].seq) + " ",
+        print " Ack: " + ("%10s" % pkt[TCP].ack) + " ",
+        pkt_len = 0
+        try:
+            pkt_len = len(pkt[Raw].load)
+        except:
+            pass
+        print " Len: " + ("%4s" % pkt_len) + " ",
+        if pkt[TCP].flags & 0x02:
+            print "SYN ",
+        if pkt[TCP].flags & 0x10:
+            print "ACK ",
+        print ""
 
-def main():
+def send_pkt(args, seq_no, message, flags):
+    ack_no = 0
+    # If handshake is enabled, all packets excpet the first SYN packet should have ACK no. of 1
+    if args.handshake and "S" not in flags:
+        ack_no = 1
+    time.sleep(args.wait_time)
+    iface = args.iface
+    address = socket.gethostbyname(DEST_IP[iface])
+    options = []
+    if "S" in flags:
+        options = [('MSS', args.payload_len)]
+    pkt = Ether(src = get_if_hwaddr(iface), dst = 'ff:ff:ff:ff:ff:ff')
+    pkt = pkt / IP(dst = address) / TCP(dport = args.dest_port, sport = args.src_port,
+        seq = seq_no, ack = ack_no, flags = flags, options = options) / message
+    print_pkt(args, pkt, False)
+    sendp(pkt, iface = iface, verbose = False)
 
-    if len(sys.argv) < 2:
-        print 'Pass 1 argument: <number of packets>'
-        exit(1)
+def send_series(args, seq_no, final_seq_no):
+    num_pkt = random.randint(args.min_num_pkt_per_series, args.max_num_pkt_per_series)
+    for i in range(num_pkt):
+        current_seq_no = seq_no + i * args.payload_len
+        if current_seq_no <= final_seq_no:
+            payload_len = args.payload_len
+            if i == num_pkt - 1 and random.random() < args.probability_half_pkt_end:
+                payload_len = int(math.floor(args.payload_len / 2))
+            send_pkt(args, current_seq_no, random_string(payload_len), "")
 
-    sport = random.randint(min_port_no, 65535)
-    dport = random.randint(min_port_no, 65535)
+def handle_pkt(args, pkt, final_seq_no):
+    if (TCP in pkt and
+        pkt[TCP].dport == args.src_port and
+        pkt[TCP].sport == args.dest_port and
+        pkt[IP].dst == THIS_IP[args.iface] and
+        pkt[TCP].flags & 0x10): # ACK
+            print_pkt(args, pkt, True)
+            # Send next pkt
+            next_seq_no = pkt[TCP].ack
+            if pkt[TCP].flags & 0x02: # SYN
+                send_pkt(args, next_seq_no, "", "A")
+            send_series(args, next_seq_no, final_seq_no)
 
-    send_packet(random_string(num_chars_per_packet), 0, sport, dport)
-
-    ifaces = filter(lambda i: 'eth' in i, os.listdir('/sys/class/net/'))
-    sniff(iface = ifaces[0], prn = lambda x: handle_packet(x, num_chars_per_packet * int(sys.argv[1]) - 1))
+def main(args):
+    # Calculate initial sequence number
+    initial_seq_no = random.randint(0, MAX_SEQ_NO - 1)
+    if args.seq_from_zero:
+        initial_seq_no = 0
+    # Calculate final sequence number based on args.num_pkt
+    final_seq_no = (initial_seq_no + args.payload_len * (args.num_pkt - 1)) % MAX_SEQ_NO
+    # If handshake is enabled, add 1 byte to final_seq_no for SYN packet, and send SYN packet
+    if args.handshake:
+        final_seq_no += 1
+        send_pkt(args, initial_seq_no, "", "S")
+    else:
+        send_series(args, initial_seq_no, final_seq_no)
+    # Start sniffing
+    sniff(iface = args.iface, prn = lambda x: handle_pkt(args, x, final_seq_no))
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='Unidirectional TCP/IP packet sender')
+    parser.add_argument('-t', dest='num_pkt', help='Total number of full packets to send (2 halves = 1 full)',
+                        type=int, action="store", required=False,
+                        default=1)
+    parser.add_argument('-l', dest='payload_len', help='Payload length (number of bytes/characters)',
+                        type=int, action="store", required=False,
+                        default=10)
+    parser.add_argument('-n', dest='min_num_pkt_per_series', help='Minimum number of packets per series',
+                        type=int, action="store", required=False,
+                        default=1)
+    parser.add_argument('-m', dest='max_num_pkt_per_series', help='Maximum number of packets per series',
+                        type=int, action="store", required=False,
+                        default=1)
+    parser.add_argument('-e', dest='probability_half_pkt_end', help='Prob. of ending a series with a half packet',
+                        type=float, action="store", required=False,
+                        default=0)
+    parser.add_argument('-w', dest='wait_time', help='Wait time before sending packet',
+                        type=float, action="store", required=False,
+                        default=0)
+    parser.add_argument('-d', dest='dest_port', help='Destination port number',
+                        type=int, action="store", required=False,
+                        default=random.randint(MIN_PORT_NO, MAX_PORT_NO - 1))
+    parser.add_argument('-s', dest='src_port', help='Source port number',
+                        type=int, action="store", required=False,
+                        default=random.randint(MIN_PORT_NO, MAX_PORT_NO - 1))
+    parser.add_argument('-p', dest='print_pkt', help='Print entire packets',
+                        action="store_true", required=False)
+    parser.add_argument('-k', dest='handshake', help='Turn on SYN handshake',
+                        action="store_true", required=False)
+    parser.add_argument('-z', dest='seq_from_zero', help='Sequence number starts at zero',
+                        action="store_true", required=False)
+    args = parser.parse_args()
+    args.iface = filter(lambda i: 'eth' in i, os.listdir('/sys/class/net/'))[0] # "h1-eth0" or "h2-eth0"
+    main(args)

@@ -48,9 +48,9 @@
     {
       "table": "MyIngress.tcp_flag_match",
       "match": {
-        "hdr.tcp.ctrl": 4
+        "hdr.tcp.ctrl": 2
       },
-      "action_name": "NoAction",
+      "action_name": "MyIngress.push_mss",
       "action_params": { }
     }
   ]

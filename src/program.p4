@@ -136,6 +136,7 @@ register<bit<32>>(1) current_rtt_index;
 
 /* register/array to store RTTs in the order they are computed */
 register<bit<TIMESTAMP_BITS>>(MAX_NUM_RTTS) rtts;
+register<bit<32>>(MAX_NUM_RTTS) register_indices_of_rtts;
 
 //register<bit<8>>(REGISTER_SIZE) eACKs;
 
@@ -356,17 +357,21 @@ control MyIngress(inout headers hdr,
 		
 		
 		timestamps.read(meta.outgoing_timestamp, meta.hash_key + offset);
+		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 		
+		// Write RTT to source MAC address if available
 		if(offset < TABLE_SIZE*4){
-			meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
 			hdr.ethernet.srcAddr = meta.rtt;
-      // Write RTT to rtts register
-		  current_rtt_index.read(meta.rtt_index, 0);
-		  rtts.write(meta.rtt_index, meta.rtt);
-		  current_rtt_index.write(0, (meta.rtt_index + 1) % MAX_NUM_RTTS);
 		}else{
 			hdr.ethernet.srcAddr = 48w0;
 		}
+
+		// Write RTT to rtts register
+		current_rtt_index.read(meta.rtt_index, 0);
+		rtts.write(meta.rtt_index, meta.rtt);
+		register_indices_of_rtts.write(meta.rtt_index, meta.hash_key + offset);
+		current_rtt_index.write(0, (meta.rtt_index + 1) % MAX_NUM_RTTS);
+
 	}
 	
 	

@@ -46,6 +46,7 @@ def print_pkt(args, pkt, inbound):
         print ""
 
 def send_pkt(args, seq_no, message, flags):
+    global latest_expected_ack_no
     ack_no = 0
     # If handshake is enabled, all packets excpet the first SYN packet should have ACK no. of 1
     if args.handshake and "S" not in flags:

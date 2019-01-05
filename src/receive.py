@@ -61,7 +61,6 @@ def send_pkt(args, ack_no, message, flags, src_port, dest_port, latency, delayed
         seq = seq_no, ack = ack_no, flags = flags, options = options) / message
     print_pkt(args, pkt, False, latency, delayed, num_pkt_acked)
     sendp(pkt, iface = iface, verbose = False)
-    sent_pkt_timestamp[(src_port, dest_port)] = time.time()
 
 def handle_pkt(args, pkt):
     if TCP in pkt and pkt[IP].dst == THIS_IP[args.iface]:
@@ -101,7 +100,7 @@ def check_received_pkt_info(args):
                 if not found_latest_received_pkt_info:
                     latest_received_pkt_infos.append(received_pkt_info)
         else:
-            latest_received_pkt_infos = received_pkt_info
+            latest_received_pkt_infos = received_pkt_infos
         # Send ACK if the received pkt's timestamp is after the last sent
         for latest_received_pkt_info in latest_received_pkt_infos:
             l = latest_received_pkt_info
@@ -121,11 +120,12 @@ def check_received_pkt_info(args):
             if (l["timestamp"] > latest_sent_pkt_timestamp and time.time() >= l["timestamp"] + latency):
                 # How many packets are we ACKing?
                 num_pkt_acked = 0
-                for received_pkt_info in received_pkt_infos:
-                    if (l["src_port"] == received_pkt_info["src_port"] and
-                        l["dest_port"] == received_pkt_info["dest_port"] and
-                        received_pkt_info["timestamp"] >= latest_sent_pkt_timestamp):
-                            num_pkt_acked += 1
+                if args.combined_ack:
+                    for received_pkt_info in received_pkt_infos:
+                        if (l["src_port"] == received_pkt_info["src_port"] and
+                            l["dest_port"] == received_pkt_info["dest_port"] and
+                            received_pkt_info["timestamp"] > latest_sent_pkt_timestamp):
+                                num_pkt_acked += 1
                 # Flags
                 flags = "A"
                 if l["syn"]:
@@ -137,6 +137,7 @@ def check_received_pkt_info(args):
                 # Send
                 send_pkt(args, ack_no, "", flags, l["dest_port"], l["src_port"],
                     latency, delayed, num_pkt_acked)
+                sent_pkt_timestamp[(l["dest_port"], l["src_port"])] = l["timestamp"]
                 # Add latency to stats
                 if not delayed:
                     non_delayed_latencies.append(latency)

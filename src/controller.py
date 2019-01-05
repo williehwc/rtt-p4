@@ -1,6 +1,8 @@
 #!/usr/bin/env python2
 import sys, time, pexpect, re
 
+TOTAL_REGISTER_SIZE = 5 * 4 # TABLE_SIZE * NUM_TABLES
+
 def run_thrift_command(thrift, command):
     if command is not None:
         thrift.sendline(command)
@@ -19,13 +21,18 @@ def main(rtt_threshold):
         time.sleep(2)
         # Issue commands
         current_rtts_thrift_output = run_thrift_command(thrift, 'register_read rtts')
+        current_register_indices_of_rtts_thrift_output = \
+            run_thrift_command(thrift, 'register_read register_indices_of_rtts')
         run_thrift_command(thrift, 'register_reset rtts')
+        run_thrift_command(thrift, 'register_reset register_indices_of_rtts')
         run_thrift_command(thrift, 'register_reset current_rtt_index')
         # Process new RTTs
         current_rtts = parse_thrift_register(current_rtts_thrift_output)
-        for rtt in current_rtts:
-            if rtt > 0:
-               rtts.append(rtt)
+        current_register_indices_of_rtts = \
+            parse_thrift_register(current_register_indices_of_rtts_thrift_output)
+        for i in range(len(current_rtts)):
+            if current_rtts[i] > 0 and current_register_indices_of_rtts[i] < TOTAL_REGISTER_SIZE:
+               rtts.append(current_rtts[i])
         # Print statistics
         print "--------------------------------------"
         print "# pkts processed:             " + str(len(rtts))

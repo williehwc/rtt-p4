@@ -17,8 +17,6 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_TCP = 0x6;
-const bit<32> TABLE_SIZE = 1024;
-const bit<16> HASH_BASE = 16;
 const bit<32> MAX_NUM_RTTS = 128;
 
 #ifdef MSS_FLAG

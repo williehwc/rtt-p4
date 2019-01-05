@@ -89,16 +89,19 @@ def check_received_pkt_info(args):
     latest_received_pkt_infos = []
     while True:
         # Get latest received pkt for each tuple
-        for received_pkt_info in received_pkt_infos:
-            found_latest_received_pkt_info = False
-            for i in range(len(latest_received_pkt_infos)):
-                if (latest_received_pkt_infos[i]["src_port"] == received_pkt_info["src_port"] and
-                    latest_received_pkt_infos[i]["dest_port"] == received_pkt_info["dest_port"]):
-                        found_latest_received_pkt_info = True
-                        if latest_received_pkt_infos[i]["timestamp"] < received_pkt_info["timestamp"]:
-                            latest_received_pkt_infos[i] = received_pkt_info
-            if not found_latest_received_pkt_info:
-                latest_received_pkt_infos.append(received_pkt_info)
+        if args.combined_ack:
+            for received_pkt_info in received_pkt_infos:
+                found_latest_received_pkt_info = False
+                for i in range(len(latest_received_pkt_infos)):
+                    if (latest_received_pkt_infos[i]["src_port"] == received_pkt_info["src_port"] and
+                        latest_received_pkt_infos[i]["dest_port"] == received_pkt_info["dest_port"]):
+                            found_latest_received_pkt_info = True
+                            if latest_received_pkt_infos[i]["timestamp"] < received_pkt_info["timestamp"]:
+                                latest_received_pkt_infos[i] = received_pkt_info
+                if not found_latest_received_pkt_info:
+                    latest_received_pkt_infos.append(received_pkt_info)
+        else:
+            latest_received_pkt_infos = received_pkt_info
         # Send ACK if the received pkt's timestamp is after the last sent
         for latest_received_pkt_info in latest_received_pkt_infos:
             l = latest_received_pkt_info
@@ -160,8 +163,8 @@ if __name__ == '__main__':
     parser.add_argument('-r', dest='ack_delay', help='ACK delay for small packets',
                         type=float, action="store", required=False,
                         default=.5)
-    #parser.add_argument('-c', dest='combined_ack', help='Disable combined ACK',
-    #                    action="store_false", required=False)
+    parser.add_argument('-c', dest='combined_ack', help='Disable combined ACK',
+                        action="store_false", required=False)
     parser.add_argument('-p', dest='print_pkt', help='Print entire packets',
                         action="store_true", required=False)
     #parser.add_argument('-v', dest='threshold', help='SLA latency in seconds (for statistics)',

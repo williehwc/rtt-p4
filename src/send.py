@@ -11,6 +11,8 @@ MIN_PORT_NO = 49152
 MAX_PORT_NO = 2**16 # Exclusive
 MAX_SEQ_NO  = 2**32 # Exclusive
 
+latest_expected_ack_no = 0
+
 def random_string(length):
     # Source: https://stackoverflow.com/questions/2257441
     return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(length))
@@ -52,12 +54,15 @@ def send_pkt(args, seq_no, message, flags):
     iface = args.iface
     address = socket.gethostbyname(DEST_IP[iface])
     options = []
+    expected_ack_no = seq_no + len(message)
     if "S" in flags:
         options = [('MSS', args.payload_len)]
+        expected_ack_no = seq_no + 1
     pkt = Ether(src = get_if_hwaddr(iface), dst = 'ff:ff:ff:ff:ff:ff')
     pkt = pkt / IP(dst = address) / TCP(dport = args.dest_port, sport = args.src_port,
         seq = seq_no, ack = ack_no, flags = flags, options = options) / message
     print_pkt(args, pkt, False)
+    latest_expected_ack_no = max(expected_ack_no, latest_expected_ack_no)
     sendp(pkt, iface = iface, verbose = False)
 
 def send_series(args, seq_no, final_seq_no):
@@ -77,11 +82,12 @@ def handle_pkt(args, pkt, final_seq_no):
         pkt[IP].dst == THIS_IP[args.iface] and
         pkt[TCP].flags & 0x10): # ACK
             print_pkt(args, pkt, True)
-            # Send next pkt
-            next_seq_no = pkt[TCP].ack
-            if pkt[TCP].flags & 0x02: # SYN
-                send_pkt(args, next_seq_no, "", "A")
-            send_series(args, next_seq_no, final_seq_no)
+            if pkt[TCP].ack == latest_expected_ack_no:
+                # Send next pkt
+                next_seq_no = pkt[TCP].ack
+                if pkt[TCP].flags & 0x02: # SYN
+                    send_pkt(args, next_seq_no, "", "A")
+                send_series(args, next_seq_no, final_seq_no)
 
 def main(args):
     # Calculate initial sequence number

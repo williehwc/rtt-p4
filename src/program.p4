@@ -33,7 +33,6 @@ const bit<32> MSS_TABLE_SIZE = 32w100; //make sure sufficiently large to limit c
 const bit<32> NUM_TABLES = 32w4;
 const bit<32> DROP_INDX = NUM_TABLES;
 const bit<32> REGISTER_SIZE = TABLE_SIZE * (NUM_TABLES+1); //+1 for drop table
-const bit<TIMESTAMP_BITS> LATENCY_THRESHOLD = 0x0000004C4B40; //5 seconds
 
 
 /*************************************************************************
@@ -134,6 +133,9 @@ register<bit<32>>(1) current_rtt_index;
 /* register/array to store RTTs in the order they are computed */
 register<bit<TIMESTAMP_BITS>>(MAX_NUM_RTTS) rtts;
 register<bit<32>>(MAX_NUM_RTTS) register_indices_of_rtts;
+
+/* registers for tunable parameters */
+register<bit<TIMESTAMP_BITS>>(1) latency_threshold;
 
 //register<bit<8>>(REGISTER_SIZE) eACKs;
 
@@ -281,11 +283,14 @@ control MyIngress(inout headers hdr,
 #endif
 
 		bit<TIMESTAMP_BITS> outgoing_timestamp;
+		bit<TIMESTAMP_BITS> lt;
 
-		bit<TIMESTAMP_BITS> time_diff0 = LATENCY_THRESHOLD;
-		bit<TIMESTAMP_BITS> time_diff1 = LATENCY_THRESHOLD;
-		bit<TIMESTAMP_BITS> time_diff2 = LATENCY_THRESHOLD;
-		bit<TIMESTAMP_BITS> time_diff3 = LATENCY_THRESHOLD;
+		latency_threshold.read(lt, 0);
+
+		bit<TIMESTAMP_BITS> time_diff0 = lt;
+		bit<TIMESTAMP_BITS> time_diff1 = lt;
+		bit<TIMESTAMP_BITS> time_diff2 = lt;
+		bit<TIMESTAMP_BITS> time_diff3 = lt;
 
 		//hardcoded for 4 tables
 		//calculate the time difference between the current time and each of the existing timestamps at that index
@@ -311,13 +316,13 @@ control MyIngress(inout headers hdr,
 			time_diff3 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
 		}
 
-		if(time_diff0 < LATENCY_THRESHOLD){ //no stale packet in table 0
+		if(time_diff0 < lt){ //no stale packet in table 0
 			offset = TABLE_SIZE;
-			if(time_diff1 < LATENCY_THRESHOLD){ //no stale packet in table 1
+			if(time_diff1 < lt){ //no stale packet in table 1
 				offset = TABLE_SIZE * 2;
-				if(time_diff2 < LATENCY_THRESHOLD){ // no stale packet in table 2
+				if(time_diff2 < lt){ // no stale packet in table 2
 					offset = TABLE_SIZE * 3;
-					if(time_diff3 < LATENCY_THRESHOLD){ // no stale packet in table 3
+					if(time_diff3 < lt){ // no stale packet in table 3
 						offset = TABLE_SIZE * DROP_INDX; //essentially a drop
 					}
 				}

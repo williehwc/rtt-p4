@@ -27,20 +27,24 @@ def main(rtt_threshold):
         run_thrift_command(thrift, 'register_reset register_indices_of_rtts')
         run_thrift_command(thrift, 'register_reset current_rtt_index')
         # Process new RTTs
+        new_rtts_and_register_indices = []
         current_rtts = parse_thrift_register(current_rtts_thrift_output)
         current_register_indices_of_rtts = \
             parse_thrift_register(current_register_indices_of_rtts_thrift_output)
         for i in range(len(current_rtts)):
             if current_rtts[i] > 0 and current_register_indices_of_rtts[i] < TOTAL_REGISTER_SIZE:
                rtts.append(current_rtts[i])
+               new_rtts_and_register_indices.append((current_rtts[i], current_register_indices_of_rtts[i]))
         # Print statistics
         print "--------------------------------------"
-        print "# pkts processed:             " + str(len(rtts))
-        print "# pkts exceeding threshold:   " + str(len([rtt for rtt in rtts if rtt > rtt_threshold]))
-        print "# pkts at or below threshold: " + str(len([rtt for rtt in rtts if rtt <= rtt_threshold]))
+        print "# pkts processed:              " + str(len(rtts))
+        print "# pkts exceeding threshold:    " + str(len([rtt for rtt in rtts if rtt > rtt_threshold]))
+        print "# pkts at or below threshold:  " + str(len([rtt for rtt in rtts if rtt <= rtt_threshold]))
         if len(rtts) > 0:
-            print "Average RTT:                  " + str(sum(rtts) / len(rtts))
-
+            print "Average RTT:                   " + str(sum(rtts) / len(rtts))
+        if len(new_rtts_and_register_indices) > 0:
+            print "New RTTs and register indices:",
+            print new_rtts_and_register_indices
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print 'Pass 1 argument: <RTT threshold in microseconds>'

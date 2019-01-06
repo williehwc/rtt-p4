@@ -30,20 +30,20 @@ def print_pkt(args, pkt, inbound, latency, delayed, num_pkt_acked):
         else:
             print "OUT " + str(pkt[TCP].sport) + "->" + str(pkt[TCP].dport),
         pkt_len = 0
-        print " Seq: " + ("%10s" % pkt[TCP].seq),
+        print "Seq: " + ("%10s" % pkt[TCP].seq),
         try:
             pkt_len = len(pkt[Raw].load)
         except:
             pass
-        print " Len: " + ("%4s" % pkt_len),
-        print " Lat: " + ("%4s" % latency),
-        print " For: " + ("%4s" % num_pkt_acked),
+        print "Len: " + ("%4s" % pkt_len),
+        print "Lat: " + ("%-15s" % latency),
+        print "For: " + ("%2s" % num_pkt_acked),
         if pkt[TCP].flags & 0x02:
-            print "SYN ",
+            print "SYN",
         if pkt[TCP].flags & 0x10:
-            print "ACK ",
+            print "ACK",
         if delayed:
-            print "delayed",
+            print "d",
         print ""
 
 def send_pkt(args, ack_no, message, flags, src_port, dest_port, latency, delayed, num_pkt_acked):
@@ -76,12 +76,13 @@ def handle_pkt(args, pkt):
                 pass
             # Add to received_pkt_infos
             received_pkt_infos.append({
-                "src_port"   : pkt[TCP].sport, # other port
-                "dest_port"  : pkt[TCP].dport, # this port
-                "timestamp"  : time.time(),
-                "seq_no"     : pkt[TCP].seq,
-                "payload_len": pkt_len,
-                "syn"        : pkt[TCP].flags & 0x02
+                "src_port"            : pkt[TCP].sport, # other port
+                "dest_port"           : pkt[TCP].dport, # this port
+                "timestamp"           : time.time(),
+                "seq_no"              : pkt[TCP].seq,
+                "payload_len"         : pkt_len,
+                "syn"                 : pkt[TCP].flags & 0x02,
+                "non_delayed_latency" : random.uniform(args.min_latency, args.max_latency)
             })
 
 def check_received_pkt_info(args):
@@ -113,7 +114,7 @@ def check_received_pkt_info(args):
                 delayed = False
             elif (l["src_port"], l["dest_port"]) in mss:
                 delayed = l["payload_len"] < mss[(l["src_port"], l["dest_port"])] and not l["syn"]
-            latency = random.uniform(args.min_latency, args.max_latency)
+            latency = l["non_delayed_latency"]
             if delayed:
                 latency += args.ack_delay
             # Send pkt if enough time has elapsed

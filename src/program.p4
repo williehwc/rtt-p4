@@ -95,9 +95,6 @@ header tcp_mss_option_t{
 struct metadata {
 	bit<FLOWID_BITS> flowID;
 	bit<32> hash_key;
-	bit<TIMESTAMP_BITS> outgoing_timestamp;
-	bit<TIMESTAMP_BITS> rtt;
-	bit<32> rtt_index;
 	
 	bit<32> eACK;
 	bit<32> payload_size;
@@ -283,22 +280,36 @@ control MyIngress(inout headers hdr,
 		set_mssKey();
 #endif
 
+		bit<TIMESTAMP_BITS> outgoing_timestamp;
+
+		bit<TIMESTAMP_BITS> time_diff0 = LATENCY_THRESHOLD;
+		bit<TIMESTAMP_BITS> time_diff1 = LATENCY_THRESHOLD;
+		bit<TIMESTAMP_BITS> time_diff2 = LATENCY_THRESHOLD;
+		bit<TIMESTAMP_BITS> time_diff3 = LATENCY_THRESHOLD;
+
 		//hardcoded for 4 tables
 		//calculate the time difference between the current time and each of the existing timestamps at that index
 		//for each table
 		bit<32> offset = 32w0;
-		timestamps.read(meta.outgoing_timestamp, meta.hash_key + offset);
-		bit<TIMESTAMP_BITS> time_diff0 = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
+		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
+		if (outgoing_timestamp != 0) {
+			time_diff0 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
+		}
 		offset = offset + TABLE_SIZE;
-		timestamps.read(meta.outgoing_timestamp, meta.hash_key + offset);
-		bit<TIMESTAMP_BITS> time_diff1 = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
+		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
+		if (outgoing_timestamp != 0) {
+			time_diff1 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
+		}
 		offset = offset + TABLE_SIZE;
-		timestamps.read(meta.outgoing_timestamp, meta.hash_key + offset);
-		bit<TIMESTAMP_BITS> time_diff2 = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
+		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
+		if (outgoing_timestamp != 0) {
+			time_diff2 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
+		}
 		offset = offset + TABLE_SIZE;
-		timestamps.read(meta.outgoing_timestamp, meta.hash_key + offset);
-		bit<TIMESTAMP_BITS> time_diff3 = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;		
-
+		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
+		if (outgoing_timestamp != 0) {
+			time_diff3 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
+		}
 
 		if(time_diff0 < LATENCY_THRESHOLD){ //no stale packet in table 0
 			offset = TABLE_SIZE;
@@ -336,41 +347,51 @@ control MyIngress(inout headers hdr,
 		
 		bit<32> offset = TABLE_SIZE * 4;
 		bit<FLOWID_BITS> rflowID;
+
+		bit<TIMESTAMP_BITS> rtt;
+		bit<32> rtt_index;
+		bit<TIMESTAMP_BITS> outgoing_timestamp;
 		
 		//update index by going backwards through tables
 		keys.read(rflowID, meta.hash_key+TABLE_SIZE*3);
-		if(rflowID == meta.flowID){
+		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE*3);
+		if(rflowID == meta.flowID && outgoing_timestamp != 0){
 			offset = TABLE_SIZE*3;
 		}
 		keys.read(rflowID, meta.hash_key+TABLE_SIZE*2);
-		if(rflowID == meta.flowID){
+		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE*2);
+		if(rflowID == meta.flowID && outgoing_timestamp != 0){
 			offset = TABLE_SIZE*2;
 		}
 		keys.read(rflowID, meta.hash_key+TABLE_SIZE);
-		if(rflowID == meta.flowID){
+		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE);
+		if(rflowID == meta.flowID && outgoing_timestamp != 0){
 			offset = TABLE_SIZE;
 		}
 		keys.read(rflowID, meta.hash_key);
-		if(rflowID == meta.flowID){
+		timestamps.read(outgoing_timestamp, meta.hash_key);
+		if(rflowID == meta.flowID && outgoing_timestamp != 0){
 			offset = 0;
 		}
 		
+		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
+		rtt = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
 		
-		timestamps.read(meta.outgoing_timestamp, meta.hash_key + offset);
-		meta.rtt = standard_metadata.ingress_global_timestamp - meta.outgoing_timestamp;
-		
-		// Write RTT to source MAC address if available
+		// For debugging purposes, write RTT to source MAC address if available
 		if(offset < TABLE_SIZE*4){
-			hdr.ethernet.srcAddr = meta.rtt;
+			hdr.ethernet.srcAddr = rtt;
 		}else{
 			hdr.ethernet.srcAddr = 48w0;
 		}
 
 		// Write RTT to rtts register
-		current_rtt_index.read(meta.rtt_index, 0);
-		rtts.write(meta.rtt_index, meta.rtt);
-		register_indices_of_rtts.write(meta.rtt_index, meta.hash_key + offset);
-		current_rtt_index.write(0, (meta.rtt_index + 1) % MAX_NUM_RTTS);
+		current_rtt_index.read(rtt_index, 0);
+		rtts.write(rtt_index, rtt);
+		register_indices_of_rtts.write(rtt_index, meta.hash_key + offset);
+		current_rtt_index.write(0, (rtt_index + 1) % MAX_NUM_RTTS);
+
+		// Set timestamp to 0
+		timestamps.write(meta.hash_key + offset, 0);
 
 	}
 	

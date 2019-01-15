@@ -1,5 +1,5 @@
 #!/usr/bin/env python2
-import argparse, random, math, os, socket, colored, string, time, logging
+import argparse, random, math, os, socket, colored, string, time, logging, sys, signal
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import sendp, get_if_hwaddr, sniff, hexdump
 from scapy.all import Ether, IP, TCP, Raw
@@ -12,12 +12,17 @@ MAX_PORT_NO = 2**16 # Exclusive
 MAX_SEQ_NO  = 2**32 # Exclusive
 
 latest_expected_ack_no = 0
+sent_pkt_infos = []
+non_delayed_latencies = []
 
 def random_string(length):
     # Source: https://stackoverflow.com/questions/2257441
     return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(length))
 
-def print_pkt(args, pkt, inbound):
+def print_pkt(args, pkt, inbound, latency, delay_possible):
+    return
+    if not inbound:
+        return
     color = "cyan"
     if inbound:
         color = "yellow"
@@ -31,18 +36,21 @@ def print_pkt(args, pkt, inbound):
             print "IN  " + str(pkt[TCP].dport) + "<-" + str(pkt[TCP].sport),
         else:
             print "OUT " + str(pkt[TCP].sport) + "->" + str(pkt[TCP].dport),
-        print " Seq: " + ("%10s" % pkt[TCP].seq) + " ",
-        print " Ack: " + ("%10s" % pkt[TCP].ack) + " ",
+        print "Seq: " + ("%10s" % pkt[TCP].seq),
+        print "Ack: " + ("%10s" % pkt[TCP].ack),
         pkt_len = 0
         try:
             pkt_len = len(pkt[Raw].load)
         except:
             pass
-        print " Len: " + ("%4s" % pkt_len) + " ",
+        print "Len: " + ("%4s" % pkt_len),
+        print "Lat: " + ("%-15s" % latency),
         if pkt[TCP].flags & 0x02:
-            print "SYN ",
+            print "SYN",
         if pkt[TCP].flags & 0x10:
-            print "ACK ",
+            print "ACK",
+        if delay_possible:
+            print "dp",
         print ""
 
 def send_pkt(args, seq_no, message, flags):
@@ -62,8 +70,13 @@ def send_pkt(args, seq_no, message, flags):
     pkt = Ether(src = get_if_hwaddr(iface), dst = 'ff:ff:ff:ff:ff:ff')
     pkt = pkt / IP(dst = address) / TCP(dport = args.dest_port, sport = args.src_port,
         seq = seq_no, ack = ack_no, flags = flags, options = options) / message
-    print_pkt(args, pkt, False)
+    print_pkt(args, pkt, False, 0, False)
     latest_expected_ack_no = max(expected_ack_no, latest_expected_ack_no)
+    sent_pkt_infos.append({
+        "expected_ack_no": expected_ack_no,
+        "timestamp"      : time.time(),
+        "payload_len"    : len(message)
+    })
     sendp(pkt, iface = iface, verbose = False)
 
 def send_series(args, seq_no, final_seq_no):
@@ -75,6 +88,11 @@ def send_series(args, seq_no, final_seq_no):
             if i == num_pkt - 1 and random.random() < args.probability_half_pkt_end:
                 payload_len = int(math.floor(args.payload_len / 2))
             send_pkt(args, current_seq_no, random_string(payload_len), "")
+        else:
+            if args.log_file is not None and len(non_delayed_latencies) > 0:
+                f = open(args.log_file, "w")
+                f.write(str(sum(non_delayed_latencies) / len(non_delayed_latencies)))
+                f.close()
 
 def handle_pkt(args, pkt, final_seq_no):
     if (TCP in pkt and
@@ -82,7 +100,15 @@ def handle_pkt(args, pkt, final_seq_no):
         pkt[TCP].sport == args.dest_port and
         pkt[IP].dst == THIS_IP[args.iface] and
         pkt[TCP].flags & 0x10): # ACK
-            print_pkt(args, pkt, True)
+            latency = 0
+            for sent_pkt_info in sent_pkt_infos:
+                if pkt[TCP].ack == sent_pkt_info["expected_ack_no"]:
+                    latency = time.time() - sent_pkt_info["timestamp"]
+                    if sent_pkt_info["payload_len"] == args.payload_len:
+                        non_delayed_latencies.append(latency)
+                    break
+            delay_possible = sent_pkt_info["payload_len"] < args.payload_len and not pkt[TCP].flags & 0x02 # SYN
+            print_pkt(args, pkt, True, latency, delay_possible)
             if pkt[TCP].ack == latest_expected_ack_no:
                 # Send next pkt
                 next_seq_no = pkt[TCP].ack
@@ -138,6 +164,9 @@ if __name__ == '__main__':
                         action="store_true", required=False)
     parser.add_argument('-z', dest='seq_from_zero', help='Sequence number starts at zero',
                         action="store_true", required=False)
+    parser.add_argument('-f', dest='log_file', help='Log file path',
+                        type=str, action="store", required=False,
+                        default=None)
     args = parser.parse_args()
     args.iface = filter(lambda i: 'eth' in i, os.listdir('/sys/class/net/'))[0] # "h1-eth0" or "h2-eth0"
     main(args)

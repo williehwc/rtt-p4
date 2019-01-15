@@ -1,6 +1,6 @@
 #!/usr/bin/env python2
 
-import argparse, os, colored, time, socket, threading, random, signal, logging
+import argparse, os, colored, time, socket, threading, random, signal, logging, sys, signal
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import sendp, get_if_hwaddr, sniff, hexdump
 from scapy.all import Ether, IP, TCP, Raw
@@ -14,8 +14,12 @@ sent_pkt_timestamp = dict()
 received_pkt_infos = []
 mss = dict()
 non_delayed_latencies = []
+alt_non_delayed_latencies = []
 
 def print_pkt(args, pkt, inbound, latency, delayed, num_pkt_acked):
+    return
+    if inbound:
+        return
     color = "cyan"
     if inbound:
         color = "yellow"
@@ -75,6 +79,10 @@ def handle_pkt(args, pkt):
             except:
                 pass
             # Add to received_pkt_infos
+            target_latency = random.uniform(args.min_latency, args.max_latency)
+            use_alt_latency = random.random() < args.probability_alt
+            if use_alt_latency:
+                target_latency = random.uniform(args.alt_min_latency, args.alt_max_latency)
             received_pkt_infos.append({
                 "src_port"            : pkt[TCP].sport, # other port
                 "dest_port"           : pkt[TCP].dport, # this port
@@ -82,7 +90,8 @@ def handle_pkt(args, pkt):
                 "seq_no"              : pkt[TCP].seq,
                 "payload_len"         : pkt_len,
                 "syn"                 : pkt[TCP].flags & 0x02,
-                "non_delayed_latency" : random.uniform(args.min_latency, args.max_latency)
+                "non_delayed_latency" : target_latency,
+                "use_alt_latency"     : use_alt_latency
             })
 
 def check_received_pkt_info(args):
@@ -135,18 +144,50 @@ def check_received_pkt_info(args):
                 ack_no = (l["seq_no"] + l["payload_len"]) % MAX_SEQ_NO
                 if l["syn"]:
                     ack_no = (l["seq_no"] + 1) % MAX_SEQ_NO
+                # Observed latency
+                observed_latency = time.time() - l["timestamp"]
                 # Send
                 send_pkt(args, ack_no, "", flags, l["dest_port"], l["src_port"],
-                    latency, delayed, num_pkt_acked)
+                    observed_latency, delayed, num_pkt_acked)
                 sent_pkt_timestamp[(l["dest_port"], l["src_port"])] = l["timestamp"]
                 # Add latency to stats
                 if not delayed:
-                    non_delayed_latencies.append(latency)
+                    if l["use_alt_latency"]:
+                        alt_non_delayed_latencies.append(observed_latency)
+                    else:
+                        non_delayed_latencies.append(observed_latency)
+        # Idle timeout
+        if args.idle_timeout > 0:
+            latest_activity = args.start_time
+            if len(latest_received_pkt_infos) > 0:
+                latest_activity = max([l["timestamp"] for l in latest_received_pkt_infos])
+            if time.time() - latest_activity > args.idle_timeout:
+                sys.exit(0)
+
+def signal_handler(sig, frame):
+    if len(non_delayed_latencies) > 0:
+        print ' Mean non-delayed latency:',
+        print str(sum(non_delayed_latencies) / len(non_delayed_latencies)) + ' s'
+        if args.log_file is not None:
+            f = open(args.log_file, "w")
+            if len(non_delayed_latencies) > 0:
+                f.write(str(sum(non_delayed_latencies) / len(non_delayed_latencies)))
+            else:
+                f.write("0")
+            if args.probability_alt > 0:
+                f.write(" ")
+                if len(alt_non_delayed_latencies) > 0:
+                    f.write(str(sum(alt_non_delayed_latencies) / len(alt_non_delayed_latencies)))
+                else:
+                    f.write("0")
+            f.close()
+    sys.exit(0)
 
 def main(args):
     t = threading.Thread(target = check_received_pkt_info, args = (args,))
     t.daemon = True
     t.start()
+    signal.signal(signal.SIGINT, signal_handler)
     sniff(iface = args.iface, prn = lambda x: handle_pkt(args, x))
 
 if __name__ == '__main__':
@@ -172,6 +213,22 @@ if __name__ == '__main__':
     #parser.add_argument('-v', dest='threshold', help='SLA latency in seconds (for statistics)',
     #                    type=float, action="store", required=False,
     #                    default=.5)
+    parser.add_argument('-g', dest='log_file', help='Log file path',
+                        type=str, action="store", required=False,
+                        default=None)
+    parser.add_argument('-o', dest='idle_timeout', help='Idle timeout for thread in seconds',
+                        type=float, action="store", required=False,
+                        default=60)
+    parser.add_argument('--aa', dest='alt_min_latency', help='Alternative minimum latency in seconds',
+                        type=float, action="store", required=False,
+                        default=.5)
+    parser.add_argument('--bb', dest='alt_max_latency', help='Alternative maximum latency in seconds',
+                        type=float, action="store", required=False,
+                        default=.5)
+    parser.add_argument('-v', dest='probability_alt', help='Probability of alternative latency',
+                        type=float, action="store", required=False,
+                        default=0)
     args = parser.parse_args()
     args.iface = filter(lambda i: 'eth' in i, os.listdir('/sys/class/net/'))[0] # "h1-eth0" or "h2-eth0"
+    args.start_time = time.time()
     main(args)

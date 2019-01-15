@@ -27,16 +27,16 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<8> TYPE_TCP = 0x6;
-const bit<32> MAX_NUM_RTTS = 128;
+const bit<32> MAX_NUM_RTTS = 1024;
 
 #ifdef MSS_FLAG
 const bit<6>  SYN_FLAG = 6w2;
 #endif
 
-const bit<32> TABLE_SIZE = 32w5;
+const bit<32> TABLE_SIZE = 5;
 
 #ifdef MSS_FLAG
-const bit<32> MSS_TABLE_SIZE = 32w100; //make sure sufficiently large to limit collisions
+const bit<32> MSS_TABLE_SIZE = 32w1000; //make sure sufficiently large to limit collisions
 #endif
 
 // a little unclear, would prefer 32w{MULTI_TABLE}
@@ -159,7 +159,7 @@ register<bit<TIMESTAMP_BITS>>(1) latency_threshold;
 
 #ifdef SUBSAMPLE_FLAG
 //0% means all packets will be sampled
-register<bit<16>>(1) FILTER_PERCENT;
+register<bit<16>>(1) filter_percent;
 #endif
 
 
@@ -298,10 +298,10 @@ control MyIngress(inout headers hdr,
 			{meta.flowID},
 			16w100);
 		
-		bit<16> filter_percent = 16w0;
-		FILTER_PERCENT.read(filter_percent, 0);
+		bit<16> fp = 16w0;
+		filter_percent.read(fp, 0);
 
-		if(sampleKey >= filter_percent){
+		if(sampleKey >= fp){
 			meta.sampled = 1w1; 
 		}else{
 			meta.sampled = 1w0;

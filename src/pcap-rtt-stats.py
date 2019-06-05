@@ -27,15 +27,14 @@ TSHARK_COMMAND = [
 
 DEFAULT_MSS = 1460
 
-def lookup_mss(packet, all_packets):
-    for p in all_packets:
+def lookup_mss(packet, packets_with_mss):
+    for p in packets_with_mss:
         if  "tcp.stream" in p \
         and packet["tcp.stream"] == p["tcp.stream"] \
         and packet["ip.src"] == p["ip.src"] \
         and packet["ip.dst"] == p["ip.dst"] \
         and packet["tcp.srcport"] == p["tcp.srcport"] \
-        and packet["tcp.dstport"] == p["tcp.dstport"] \
-        and "tcp.options.mss_val" in p:
+        and packet["tcp.dstport"] == p["tcp.dstport"]:
             # print("Found MSS of", p["tcp.options.mss_val"], "for packet",
             #     packet["frame.number"], "in packet", p["frame.number"])
             return p["tcp.options.mss_val"]
@@ -45,8 +44,8 @@ def lookup_mss(packet, all_packets):
 class Packets:
     def __init__(self):
         self.packets = []
-    def try_append(self, packet, all_packets):
-        mss = lookup_mss(packet, all_packets)
+    def try_append(self, packet, packets_with_mss):
+        mss = lookup_mss(packet, packets_with_mss)
         if int(packet["tcp.len"]) >= mss:
             self.packets.append(packet)
     def try_ack(self, new_packet):
@@ -156,10 +155,11 @@ def main():
 
     # Iterate over packet_capture
     all_packets = [preprocess_packet(pc) for pc in packet_capture]
+    packets_with_mss = [p for p in all_packets if "tcp.options.mss_val" in p]
     for this_packet in all_packets:
         if "tcp.stream" not in this_packet:
             continue
-        packets_awaiting_ack.try_append(this_packet, all_packets)
+        packets_awaiting_ack.try_append(this_packet, packets_with_mss)
         this_rtt = packets_awaiting_ack.try_ack(this_packet)
         if this_rtt is not None:
             flows.update(this_packet, this_rtt)

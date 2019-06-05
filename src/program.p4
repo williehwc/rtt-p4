@@ -1,52 +1,63 @@
 /* -*- P4_16 -*- */
-
+/* P4 program for measuring round trip time */
+/* Javed Aman and Willie Chang */
+/* Princeton University Computer Science Department */
 
 #include <core.p4>
 #include <v1model.p4>
 
-
-
+/* size of timestamp (milliseconds) */
 #define TIMESTAMP_BITS 48
+/* size of flow_id */
 #define FLOWID_BITS 128
 
-//use to toggle support for deterministic subsampling
+/*use to toggle support for deterministic subsampling */
 #define SUBSAMPLE_FLAG
 
-//use to toggle support for cumulative ACKs
+/* use to toggle support for cumulative ACKs */
 #define MSS_FLAG 
 
-//define the number of tables MULTI_TABLE == 2,3,4
-#define MULTI_TABLE 4
+/* define the number of tables MULTI_TABLE == 2,3,4 */
+#define MULTI_TABLE 2
 
-
+/* if tracking MSS */
 #ifdef MSS_FLAG
+/* size of MSS */
 #define MSSID_BITS 96
 #endif
 
-
-
+/* ipv4 type header */
 const bit<16> TYPE_IPV4 = 0x800;
+/* tcp type header */
 const bit<8> TYPE_TCP = 0x6;
+
+/* maximum number of rtts to track */
 const bit<32> MAX_NUM_RTTS = 1024;
 
+/* syn flag header */
 #ifdef MSS_FLAG
 const bit<6>  SYN_FLAG = 6w2;
 #endif
 
-const bit<32> TABLE_SIZE = 5;
+/* number of timestamps to tables */
+const bit<32> TABLE_SIZE = 120;
 
+/* table to store MSS for flows*/
 #ifdef MSS_FLAG
-const bit<32> MSS_TABLE_SIZE = 32w1000; //make sure sufficiently large to limit collisions
+const bit<32> MSS_TABLE_SIZE = 32w1000;
 #endif
 
-// a little unclear, would prefer 32w{MULTI_TABLE}
+/* set number of hash tables */
 #ifdef MULTI_TABLE
+// a little unclear, would prefer 32w{MULTI_TABLE}
 const bit<32> NUM_TABLES = (bit<32>) MULTI_TABLE;
 #else
 const bit<32> NUM_TABLES = 32w1;
 #endif
 
+/* handle drop index */
 const bit<32> DROP_INDX = NUM_TABLES;
+/* calculate size of register of hash tables */
 const bit<32> REGISTER_SIZE = TABLE_SIZE * (NUM_TABLES+1); //+1 for drop table
 
 
@@ -58,12 +69,14 @@ typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 
+/* Ethernet header */
 header ethernet_t {
 	macAddr_t dstAddr;
 	macAddr_t srcAddr;
 	bit<16>   etherType;
 }
 
+/* ipv4 header */
 header ipv4_t {
 	bit<4>	version;
 	bit<4>	ihl;
@@ -107,20 +120,26 @@ header tcp_mss_option_t{
 #endif
 
 struct metadata {
+	/* flow id */
 	bit<FLOWID_BITS> flowID;
+	/* hash of flow */
 	bit<32> hash_key;
-	
+	/* expected ack hash */
 	bit<32> eACK;
+	/* size of packet payload */
 	bit<32> payload_size;
 
-#ifdef MSS_FLAG
-	bit<MSSID_BITS> mssID; //separate identifier for MSS table
-	bit<32> mssKey;
-#endif
+	#ifdef MSS_FLAG
+	//separate identifier for MSS table
+	bit<MSSID_BITS> mssID;
+	bit<32> mss_key;
+	#endif
 
-#ifdef SUBSAMPLE_FLAG
-	bit<1> sampled; //p4-16 runtime doesn't allow boolean values in header/metadata
-#endif
+	#ifdef SUBSAMPLE_FLAG
+	//p4-16 runtime doesn't allow boolean values in header/metadata
+	/* flag if packet is being sampled */
+	bit<1> sampled;
+	#endif
 }
 
 
@@ -128,9 +147,9 @@ struct headers {
 	ethernet_t   ethernet;
 	ipv4_t	   ipv4;
 	tcp_t		tcp;
-#ifdef MSS_FLAG
+	#ifdef MSS_FLAG
 	tcp_mss_option_t mss;
-#endif
+	#endif
 }
 
 
@@ -143,7 +162,8 @@ register<bit<TIMESTAMP_BITS>>(REGISTER_SIZE) timestamps;
 register<bit<FLOWID_BITS>>(REGISTER_SIZE) keys;
 
 #ifdef MSS_FLAG
-register<bit<16>>(MSS_TABLE_SIZE) fourTupleMSS;
+/* store mss of packet flows in table */
+register<bit<16>>(MSS_TABLE_SIZE) four_tuple_mss_table;
 #endif
 
 /* register for current RTT register index */
@@ -176,6 +196,7 @@ parser MyParser(packet_in packet,
 		transition parse_ethernet;
 	}
 
+	/* parse ethernet header */
 	state parse_ethernet {
 		packet.extract(hdr.ethernet);
 		transition select(hdr.ethernet.etherType) {
@@ -184,6 +205,7 @@ parser MyParser(packet_in packet,
 		}
 	}
 
+	/* parse ipv4 header */
 	state parse_ipv4 {
 		packet.extract(hdr.ipv4);
 		/* check to see if tcp packet */
@@ -193,24 +215,27 @@ parser MyParser(packet_in packet,
 		}
 	}
 
+	/* parse tcp header */
 	state parse_tcp {
 		packet.extract(hdr.tcp);
 		transition select(hdr.tcp.ctrl){
-#ifdef MSS_FLAG
-			SYN_FLAG : parse_mss;
-//			SYN_ACK_FLAG : parse_mss;
-#endif
-			default: accept; //everything else including ACKs
+			#ifdef MSS_FLAG
+				SYN_FLAG : parse_mss;
+//				SYN_ACK_FLAG : parse_mss;
+			#endif
+			//everything else including ACKs
+			default: accept;
 		}
 
 	}
 
-#ifdef MSS_FLAG
+	#ifdef MSS_FLAG
+	/* parse static MSS option*/
 	state parse_mss {
 		packet.extract(hdr.mss);
 		transition accept;
 	}
-#endif
+	#endif
 
 }
 
@@ -261,15 +286,15 @@ control MyIngress(inout headers hdr,
 		
 	}
 
-#ifdef MSS_FLAG	
+	#ifdef MSS_FLAG	
 	/* set the 4 tuple for the maximum segment size storing register */
 	action set_mssID(){
 		meta.mssID = hdr.ipv4.dstAddr ++ hdr.ipv4.srcAddr ++ hdr.tcp.dstPort ++ hdr.tcp.srcPort;
 	}
 
 	/* hash the 4 tuple into an index */
-	action set_mssKey(){
-		hash(meta.mssKey,
+	action set_mss_key(){
+		hash(meta.mss_key,
 			HashAlgorithm.crc32,
 			32w0,
 			{meta.mssID},
@@ -281,18 +306,18 @@ control MyIngress(inout headers hdr,
 	*/
 	action push_mss(){
 		set_mssID();
-		set_mssKey();
+		set_mss_key();
 		
-		fourTupleMSS.write(meta.mssKey, hdr.mss.mss);
+		four_tuple_mss_table.write(meta.mss_key, hdr.mss.mss);
 	}
-#endif
+	#endif
 
 
-#ifdef SUBSAMPLE_FLAG
+	#ifdef SUBSAMPLE_FLAG
 	/* determine if a packet should be sampled based on the crc32 hash */
 	action to_be_sampled(){
-		bit<16> sampleKey = 16w100;
-		hash(sampleKey,
+		bit<16> sample_key = 16w100;
+		hash(sample_key,
 			HashAlgorithm.crc16,
 			16w0,
 			{meta.flowID},
@@ -301,14 +326,14 @@ control MyIngress(inout headers hdr,
 		bit<16> fp = 16w0;
 		filter_percent.read(fp, 0);
 
-		if(sampleKey >= fp){
+		if(sample_key >= fp){
 			meta.sampled = 1w1; 
 		}else{
 			meta.sampled = 1w0;
 		}
 
 	}
-#endif
+	#endif
 
 	/* push timestamp into tables with hashed key as index */
 	action push_outgoing_timestamp(){
@@ -317,30 +342,30 @@ control MyIngress(inout headers hdr,
 		set_flowID(true);
 		set_key();
 
-#ifdef MSS_FLAG
+		#ifdef MSS_FLAG
 		set_mssID();
-		set_mssKey();
-#endif
+		set_mss_key();
+		#endif
 
 		bit<TIMESTAMP_BITS> outgoing_timestamp;
 		bit<TIMESTAMP_BITS> lt;
 
 		latency_threshold.read(lt, 0);
 
-//default is one table
+		//default is one table
 		bit<TIMESTAMP_BITS> time_diff0 = lt;
 
-#if MULTI_TABLE > 1
+		#if MULTI_TABLE > 1
 		bit<TIMESTAMP_BITS> time_diff1 = lt;
-#endif
+		#endif
 
-#if MULTI_TABLE > 2
+		#if MULTI_TABLE > 2
 		bit<TIMESTAMP_BITS> time_diff2 = lt;
-#endif
+		#endif
 
-#if MULTI_TABLE > 3
+		#if MULTI_TABLE > 3
 		bit<TIMESTAMP_BITS> time_diff3 = lt;
-#endif
+		#endif
 
 		//hardcoded for up to 4 tables
 		//calculate the time difference between the current time and each of the existing timestamps at that index
@@ -351,66 +376,66 @@ control MyIngress(inout headers hdr,
 			time_diff0 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
 		}
 
-#if MULTI_TABLE > 1
+		#if MULTI_TABLE > 1
 		offset = TABLE_SIZE;
 		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
 		if (outgoing_timestamp != 0) {
 			time_diff1 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
 		}
-#endif
+		#endif
 
-#if MULTI_TABLE > 2
+		#if MULTI_TABLE > 2
 		offset = TABLE_SIZE * 2;
 		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
 		if (outgoing_timestamp != 0) {
 			time_diff2 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
 		}
-#endif
+		#endif
 
-#if MULTI_TABLE > 3
+		#if MULTI_TABLE > 3
 		offset = TABLE_SIZE * 3;
 		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
 		if (outgoing_timestamp != 0) {
 			time_diff3 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
 		}
-#endif
+		#endif
 		if(time_diff0 < lt){ //no stale packet in table 1
 			offset = TABLE_SIZE;
-#if MULTI_TABLE > 1
+			#if MULTI_TABLE > 1
 			if(time_diff1 < lt){ //no stale packet in table 2
 				offset = TABLE_SIZE * 2;
-#if MULTI_TABLE > 2
+				#if MULTI_TABLE > 2
 				if(time_diff2 < lt){ // no stale packet in table 3
 					offset = TABLE_SIZE * 3;
-#if MULTI_TABLE	> 3
+					#if MULTI_TABLE	> 3
 					if(time_diff3 < lt){ // no stale packet in table 4
 						offset = TABLE_SIZE * 4; //essentially a drop
 					}
-#endif //MULTI_TABLE > 3
+					#endif //MULTI_TABLE > 3
 				}
-#endif //MULTI_TABLE > 2
+				#endif //MULTI_TABLE > 2
 			}
-#endif //MULTI_TABLE > 1
+			#endif //MULTI_TABLE > 1
 		}else{
 			offset = 32w0; //insert into table 1
 		}
 		
-#ifdef MSS_FLAG
+		#ifdef MSS_FLAG
 		//only allow packets that are full sized (=MSS) to be processed
 		bit<16> mss;
-		fourTupleMSS.read(mss, meta.mssKey);
+		four_tuple_mss_table.read(mss, meta.mss_key);
 		if(meta.payload_size != (bit<32>) mss){
 			offset = TABLE_SIZE * DROP_INDX;
 		}
-#endif
+		#endif
 
 
-#ifdef SUBSAMPLE_FLAG
+		#ifdef SUBSAMPLE_FLAG
 		to_be_sampled();
 		if(meta.sampled == 1w0){
 			offset = TABLE_SIZE * DROP_INDX;
 		}
-#endif
+		#endif
 
 		//write to appropriate table at index
 		timestamps.write(meta.hash_key+offset, standard_metadata.ingress_global_timestamp);
@@ -431,31 +456,31 @@ control MyIngress(inout headers hdr,
 		
 		//update index by going backwards through tables
 
-#if MULTI_TABLE > 3
+		#if MULTI_TABLE > 3
 		keys.read(rflowID, meta.hash_key+TABLE_SIZE*3);
 		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE*3);
 		if(rflowID == meta.flowID && outgoing_timestamp != 0){
 			offset = TABLE_SIZE*3;
 		}
-#endif
+		#endif
 
-#if MULTI_TABLE > 2
+		#if MULTI_TABLE > 2
 		keys.read(rflowID, meta.hash_key+TABLE_SIZE*2);
 		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE*2);
 		if(rflowID == meta.flowID && outgoing_timestamp != 0){
 			offset = TABLE_SIZE*2;
 		}
-#endif
+		#endif
 
-#if MULTI_TABLE > 1
+		#if MULTI_TABLE > 1
 		keys.read(rflowID, meta.hash_key+TABLE_SIZE);
 		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE);
 		if(rflowID == meta.flowID && outgoing_timestamp != 0){
 			offset = TABLE_SIZE;
 		}
-#endif
+		#endif
 
-//default is one table
+		//default is one table
 		keys.read(rflowID, meta.hash_key);
 		timestamps.read(outgoing_timestamp, meta.hash_key);
 		if(rflowID == meta.flowID && outgoing_timestamp != 0){
@@ -467,12 +492,12 @@ control MyIngress(inout headers hdr,
 
 
 
-#ifdef SUBSAMPLE_FLAG
+		#ifdef SUBSAMPLE_FLAG
 		to_be_sampled();
 		if(meta.sampled == 1w0){ //false
 			offset = TABLE_SIZE * DROP_INDX;
 		}
-#endif
+		#endif
 		
 		// For debugging purposes, write RTT to source MAC address if available
 		if(offset < TABLE_SIZE*DROP_INDX){
@@ -505,9 +530,9 @@ control MyIngress(inout headers hdr,
 		actions = {
 			push_outgoing_timestamp;
 			get_rtt;
-#ifdef MSS_FLAG
+			#ifdef MSS_FLAG
 			push_mss;
-#endif
+			#endif
 			NoAction;
 		}
 		size = 2;
@@ -591,9 +616,9 @@ control MyDeparser(packet_out packet, in headers hdr) {
 		packet.emit(hdr.ethernet);
 		packet.emit(hdr.ipv4);
 		packet.emit(hdr.tcp);
-#ifdef MSS_FLAG
+		#ifdef MSS_FLAG
 		packet.emit(hdr.mss);
-#endif
+		#endif
 	}
 }
 

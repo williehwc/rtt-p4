@@ -1,5 +1,6 @@
 # Read a PCAP file and list all the flows and their RTT statistics
-# Usage: python3 pcap-rtt-stats.py path/to/file.pcap
+# This "fast" version assumes tshark RTTs are correct and does not consider MSS.
+# Usage: python3 pcap-rtt-stats-fast.py path/to/file.pcap
 
 import sys, subprocess, json, statistics
 

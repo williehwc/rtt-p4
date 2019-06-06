@@ -29,8 +29,7 @@ DEFAULT_MSS = 1460
 
 def lookup_mss(packet, packets_with_mss):
     for p in packets_with_mss:
-        if  "tcp.stream" in p \
-        and packet["tcp.stream"] == p["tcp.stream"] \
+        if  packet["tcp.stream"] == p["tcp.stream"] \
         and packet["ip.src"] == p["ip.src"] \
         and packet["ip.dst"] == p["ip.dst"] \
         and packet["tcp.srcport"] == p["tcp.srcport"] \
@@ -38,78 +37,78 @@ def lookup_mss(packet, packets_with_mss):
             # print("Found MSS of", p["tcp.options.mss_val"], "for packet",
             #     packet["frame.number"], "in packet", p["frame.number"])
             return p["tcp.options.mss_val"]
-    print("Couldn't find MSS for packet", packet["frame.number"], "– assuming default of", DEFAULT_MSS)
+    # print("Couldn't find MSS for packet", packet["frame.number"], "– assuming default of", DEFAULT_MSS)
     return DEFAULT_MSS
 
 class Packets:
     def __init__(self):
-        self.packets = []
+        self.packets = dict()
     def try_append(self, packet, packets_with_mss):
-        mss = lookup_mss(packet, packets_with_mss)
-        if int(packet["tcp.len"]) >= mss:
-            self.packets.append(packet)
-    def try_ack(self, new_packet):
-        for i, packet in enumerate(self.packets):
-            # Criteria: IP address, ports, and stream number match. Also, ACK = SEQ + LEN
-            if  new_packet["tcp.flags.ack"] == 1 \
-            and packet["tcp.stream"] == new_packet["tcp.stream"] \
-            and packet["ip.src"] == new_packet["ip.dst"] \
-            and packet["ip.dst"] == new_packet["ip.src"] \
-            and packet["tcp.srcport"] == new_packet["tcp.dstport"] \
-            and packet["tcp.dstport"] == new_packet["tcp.srcport"]:
+        try:
+            if int(packet["tcp.len"]) >= lookup_mss(packet, packets_with_mss):
                 expected_ack = packet["tcp.seq"] + packet["tcp.len"]
                 if packet["tcp.flags.syn"] == 1:
                     expected_ack += 1
-                if new_packet["tcp.ack"] == expected_ack:
-                    self.packets.pop(i)
-                    rtt = new_packet["frame.time_epoch"] - packet["frame.time_epoch"]
-                    expected_rtt = -1
-                    if "tcp.analysis.ack_rtt" in new_packet:
-                        expected_rtt = new_packet["tcp.analysis.ack_rtt"]
-                    print(new_packet["frame.number"], "acks", packet["frame.number"], "with actual RTT",
-                        rtt, "–", expected_rtt, "sec expected")
-                    return rtt
+                self.packets["%d,%s,%s,%d,%d,%d" % (
+                    packet["tcp.stream"],
+                    packet["ip.src"],
+                    packet["ip.dst"],
+                    packet["tcp.srcport"],
+                    packet["tcp.dstport"],
+                    expected_ack
+                )] = {
+                    "frame.time_epoch": packet["frame.time_epoch"],
+                    "frame.number": packet["frame.number"]
+                }
+        except:
+            pass
+    def try_ack(self, new_packet):
+        # Criteria: IP address, ports, and stream number match. Also, ACK = SEQ + LEN
+        if new_packet["tcp.flags.ack"] == 1:
+            key = "%d,%s,%s,%d,%d,%d" % (
+                new_packet["tcp.stream"],
+                new_packet["ip.dst"],
+                new_packet["ip.src"],
+                new_packet["tcp.dstport"],
+                new_packet["tcp.srcport"],
+                new_packet["tcp.ack"]
+            )
+            packet = self.packets.pop(key, None)
+            if packet is not None:
+                rtt = new_packet["frame.time_epoch"] - packet["frame.time_epoch"]
+                expected_rtt = -1
+                if "tcp.analysis.ack_rtt" in new_packet:
+                    expected_rtt = new_packet["tcp.analysis.ack_rtt"]
+                print(new_packet["frame.number"], "acks", packet["frame.number"], "with actual RTT",
+                    rtt, "–", expected_rtt, "sec expected")
+                return rtt
         return None
 
 class Flows:
     def __init__(self):
-        self.flows = []
-    def find(self, tcp_stream, ip_src, ip_dst, tcp_srcport, tcp_dstport):
-        for i, flow in enumerate(self.flows):
-            if  flow["tcp.stream"] == tcp_stream \
-            and flow["ip.src"] == ip_src \
-            and flow["ip.dst"] == ip_dst \
-            and flow["tcp.srcport"] == tcp_srcport \
-            and flow["tcp.dstport"] == tcp_dstport:
-                return i
-        return None
-    def append(self, tcp_stream, ip_src, ip_dst, tcp_srcport, tcp_dstport, irtt):
-        new_flow = {
-            "tcp.stream": tcp_stream,
-            "ip.src": ip_src,
-            "ip.dst": ip_dst,
-            "tcp.srcport": tcp_srcport,
-            "tcp.dstport": tcp_dstport,
-            "tcp.analysis.initial_rtt": irtt,
-            "ack_indices_and_rtts": [] # list of tuples
-        }
-        self.flows.append(new_flow)
+        self.flows = dict()
     def update(self, packet, rtt):
-        flow_index = self.find(packet["tcp.stream"], packet["ip.dst"],
+        key = "%d,%s,%s,%d,%d" % (packet["tcp.stream"], packet["ip.dst"],
             packet["ip.src"], packet["tcp.dstport"], packet["tcp.srcport"])
-        if flow_index is None:
-            flow_index = len(self.flows)
+        if key not in self.flows:
             irtt = -1
             if "tcp.analysis.initial_rtt" in packet:
                 irtt = packet["tcp.analysis.initial_rtt"]
-            self.append(packet["tcp.stream"], packet["ip.dst"], packet["ip.src"],
-                packet["tcp.dstport"], packet["tcp.srcport"], irtt)
-        assert(self.flows[flow_index]["tcp.analysis.initial_rtt"] < 0 or
-            packet["tcp.analysis.initial_rtt"] == self.flows[flow_index]["tcp.analysis.initial_rtt"])
-        self.flows[flow_index]["ack_indices_and_rtts"].append((packet["frame.number"], rtt))
+            self.flows[key] = {
+                "tcp.stream": packet["tcp.stream"],
+                "ip.src": packet["ip.dst"],
+                "ip.dst": packet["ip.src"],
+                "tcp.srcport": packet["tcp.dstport"],
+                "tcp.dstport": packet["tcp.srcport"],
+                "tcp.analysis.initial_rtt": irtt,
+                "ack_indices_and_rtts": [] # list of tuples
+            }
+        # assert(self.flows[key]["tcp.analysis.initial_rtt"] < 0 or
+        #     packet["tcp.analysis.initial_rtt"] == self.flows[key]["tcp.analysis.initial_rtt"])
+        self.flows[key]["ack_indices_and_rtts"].append((packet["frame.number"], rtt))
     def to_csv(self, csv_file):
         csv_file.write("str,sip,spt,dip,dpt,num,avg,std,ini,idx\n")
-        for flow in self.flows:
+        for _, flow in self.flows.items():
             stdev = 0
             if len(flow["ack_indices_and_rtts"]) > 1:
                 stdev = statistics.stdev([x[1] for x in flow["ack_indices_and_rtts"]])
@@ -155,7 +154,7 @@ def main():
 
     # Iterate over packet_capture
     all_packets = [preprocess_packet(pc) for pc in packet_capture]
-    packets_with_mss = [p for p in all_packets if "tcp.options.mss_val" in p]
+    packets_with_mss = [p for p in all_packets if "tcp.options.mss_val" in p and "tcp.stream" in p]
     for this_packet in all_packets:
         if "tcp.stream" not in this_packet:
             continue

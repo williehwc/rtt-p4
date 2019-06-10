@@ -17,7 +17,7 @@
 /* use to toggle support for cumulative ACKs */
 #define MSS_FLAG 
 
-/* define the number of tables MULTI_TABLE == 2,3,4 */
+/* define the number of tables MULTI_TABLE == 2 */
 #define MULTI_TABLE 2
 
 /* if tracking MSS */
@@ -359,14 +359,6 @@ control MyIngress(inout headers hdr,
 		bit<TIMESTAMP_BITS> time_diff1 = lt;
 		#endif
 
-		#if MULTI_TABLE > 2
-		bit<TIMESTAMP_BITS> time_diff2 = lt;
-		#endif
-
-		#if MULTI_TABLE > 3
-		bit<TIMESTAMP_BITS> time_diff3 = lt;
-		#endif
-
 		//hardcoded for up to 4 tables
 		//calculate the time difference between the current time and each of the existing timestamps at that index
 		//for each table
@@ -384,36 +376,11 @@ control MyIngress(inout headers hdr,
 		}
 		#endif
 
-		#if MULTI_TABLE > 2
-		offset = TABLE_SIZE * 2;
-		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
-		if (outgoing_timestamp != 0) {
-			time_diff2 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
-		}
-		#endif
-
-		#if MULTI_TABLE > 3
-		offset = TABLE_SIZE * 3;
-		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
-		if (outgoing_timestamp != 0) {
-			time_diff3 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
-		}
-		#endif
 		if(time_diff0 < lt){ //no stale packet in table 1
 			offset = TABLE_SIZE;
 			#if MULTI_TABLE > 1
 			if(time_diff1 < lt){ //no stale packet in table 2
 				offset = TABLE_SIZE * 2;
-				#if MULTI_TABLE > 2
-				if(time_diff2 < lt){ // no stale packet in table 3
-					offset = TABLE_SIZE * 3;
-					#if MULTI_TABLE	> 3
-					if(time_diff3 < lt){ // no stale packet in table 4
-						offset = TABLE_SIZE * 4; //essentially a drop
-					}
-					#endif //MULTI_TABLE > 3
-				}
-				#endif //MULTI_TABLE > 2
 			}
 			#endif //MULTI_TABLE > 1
 		}else{
@@ -455,22 +422,6 @@ control MyIngress(inout headers hdr,
 		bit<TIMESTAMP_BITS> outgoing_timestamp;
 		
 		//update index by going backwards through tables
-
-		#if MULTI_TABLE > 3
-		keys.read(rflowID, meta.hash_key+TABLE_SIZE*3);
-		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE*3);
-		if(rflowID == meta.flowID && outgoing_timestamp != 0){
-			offset = TABLE_SIZE*3;
-		}
-		#endif
-
-		#if MULTI_TABLE > 2
-		keys.read(rflowID, meta.hash_key+TABLE_SIZE*2);
-		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE*2);
-		if(rflowID == meta.flowID && outgoing_timestamp != 0){
-			offset = TABLE_SIZE*2;
-		}
-		#endif
 
 		#if MULTI_TABLE > 1
 		keys.read(rflowID, meta.hash_key+TABLE_SIZE);

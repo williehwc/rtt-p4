@@ -182,11 +182,6 @@ register<bit<TIMESTAMP_BITS>>(1) latency_threshold;
 register<bit<16>>(1) filter_percent;
 #endif
 
-/* get payload size of packet */
-// will try with 16-bit first before doing 32-bit
-bit<16> get_payload_size(bit<16> totalLen, bit<4> ihl, bit<4> dataOffset){
-		return (bit<16>)((hdr.ipv4.totalLen - ((((bit<16>) ihl) + ((bit<16>) dataOffset)) * 16w4));
-}
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -340,9 +335,6 @@ control MyIngress(inout headers hdr,
 	}
 	#endif
 	
-	action write_and_read_to_table(){		
-		bit<16> payload_size = get_payload_size(hdr.ipv4.totalLen, hdr.ipv4.ihl, hdr.tcp.dataOffset){
-	}
 
 	/* push timestamp into tables with hashed key as index */
 	action push_outgoing_timestamp(){
@@ -477,11 +469,16 @@ control MyIngress(inout headers hdr,
 
 	}
 	
-	
+	/* drop irrelevant packets */
 	action drop() {
 		mark_to_drop();
 	}
 	
+	/* handle ACK packets */
+	action handle_ack(){
+		push_outgoing_timestamp();
+		get_rtt();
+	}
 
 	table tcp_flag_match {
 		key = {
@@ -494,6 +491,8 @@ control MyIngress(inout headers hdr,
 			push_mss;
 			#endif
 			NoAction;
+			handle_ack;
+			
 		}
 		size = 2;
 		default_action = push_outgoing_timestamp();

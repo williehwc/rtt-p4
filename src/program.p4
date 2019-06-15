@@ -17,7 +17,7 @@
 /* use to toggle support for cumulative ACKs */
 #define MSS_FLAG 
 
-/* define the number of tables MULTI_TABLE == 2,3,4 */
+/* define the number of tables MULTI_TABLE == 2 */
 #define MULTI_TABLE 2
 
 /* if tracking MSS */
@@ -36,7 +36,7 @@ const bit<32> MAX_NUM_RTTS = 1024;
 
 /* syn flag header */
 #ifdef MSS_FLAG
-const bit<6>  SYN_FLAG = 6w2;
+const bit<1>  SYN_FLAG = 1w1;
 #endif
 
 /* number of timestamps to tables */
@@ -59,6 +59,9 @@ const bit<32> NUM_TABLES = 32w1;
 const bit<32> DROP_INDX = NUM_TABLES;
 /* calculate size of register of hash tables */
 const bit<32> REGISTER_SIZE = TABLE_SIZE * (NUM_TABLES+1); //+1 for drop table
+
+/* default mss */
+const bit<32> DEFAULT_MSS = 32w1460;
 
 
 /*************************************************************************
@@ -101,7 +104,12 @@ header tcp_t {
 	bit<4>  dataOffset;
 	bit<3>  res;
 	bit<3>  ecn;
-	bit<6>  ctrl;
+	bit<1>  urg;
+	bit<1>  ack;
+	bit<1>  psh;
+	bit<1>  rst;
+	bit<1>  syn;
+	bit<1>  fin;
 	bit<16> window;
 	bit<16> checksum;
 	bit<16> urgentPtr;
@@ -172,6 +180,12 @@ register<bit<32>>(1) current_rtt_index;
 /* register/array to store RTTs in the order they are computed */
 register<bit<TIMESTAMP_BITS>>(MAX_NUM_RTTS) rtts;
 register<bit<32>>(MAX_NUM_RTTS) register_indices_of_rtts;
+register<bit<32>>(MAX_NUM_RTTS) src_ips_of_rtts;
+register<bit<32>>(MAX_NUM_RTTS) dst_ips_of_rtts;
+register<bit<16>>(MAX_NUM_RTTS) src_ports_of_rtts;
+register<bit<16>>(MAX_NUM_RTTS) dst_ports_of_rtts;
+register<bit<32>>(MAX_NUM_RTTS) seq_nos_of_rtts;
+register<bit<32>>(MAX_NUM_RTTS) ack_nos_of_rtts;
 
 /* registers for tunable parameters */
 register<bit<TIMESTAMP_BITS>>(1) latency_threshold;
@@ -218,10 +232,9 @@ parser MyParser(packet_in packet,
 	/* parse tcp header */
 	state parse_tcp {
 		packet.extract(hdr.tcp);
-		transition select(hdr.tcp.ctrl){
+		transition select(hdr.tcp.syn){
 			#ifdef MSS_FLAG
 				SYN_FLAG : parse_mss;
-//				SYN_ACK_FLAG : parse_mss;
 			#endif
 			//everything else including ACKs
 			default: accept;
@@ -334,6 +347,7 @@ control MyIngress(inout headers hdr,
 
 	}
 	#endif
+	
 
 	/* push timestamp into tables with hashed key as index */
 	action push_outgoing_timestamp(){
@@ -359,14 +373,6 @@ control MyIngress(inout headers hdr,
 		bit<TIMESTAMP_BITS> time_diff1 = lt;
 		#endif
 
-		#if MULTI_TABLE > 2
-		bit<TIMESTAMP_BITS> time_diff2 = lt;
-		#endif
-
-		#if MULTI_TABLE > 3
-		bit<TIMESTAMP_BITS> time_diff3 = lt;
-		#endif
-
 		//hardcoded for up to 4 tables
 		//calculate the time difference between the current time and each of the existing timestamps at that index
 		//for each table
@@ -384,36 +390,11 @@ control MyIngress(inout headers hdr,
 		}
 		#endif
 
-		#if MULTI_TABLE > 2
-		offset = TABLE_SIZE * 2;
-		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
-		if (outgoing_timestamp != 0) {
-			time_diff2 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
-		}
-		#endif
-
-		#if MULTI_TABLE > 3
-		offset = TABLE_SIZE * 3;
-		timestamps.read(outgoing_timestamp, meta.hash_key + offset);
-		if (outgoing_timestamp != 0) {
-			time_diff3 = standard_metadata.ingress_global_timestamp - outgoing_timestamp;
-		}
-		#endif
 		if(time_diff0 < lt){ //no stale packet in table 1
 			offset = TABLE_SIZE;
 			#if MULTI_TABLE > 1
 			if(time_diff1 < lt){ //no stale packet in table 2
 				offset = TABLE_SIZE * 2;
-				#if MULTI_TABLE > 2
-				if(time_diff2 < lt){ // no stale packet in table 3
-					offset = TABLE_SIZE * 3;
-					#if MULTI_TABLE	> 3
-					if(time_diff3 < lt){ // no stale packet in table 4
-						offset = TABLE_SIZE * 4; //essentially a drop
-					}
-					#endif //MULTI_TABLE > 3
-				}
-				#endif //MULTI_TABLE > 2
 			}
 			#endif //MULTI_TABLE > 1
 		}else{
@@ -424,7 +405,7 @@ control MyIngress(inout headers hdr,
 		//only allow packets that are full sized (=MSS) to be processed
 		bit<16> mss;
 		four_tuple_mss_table.read(mss, meta.mss_key);
-		if(meta.payload_size != (bit<32>) mss){
+		if((mss != 16w0 && meta.payload_size != (bit<32>) mss) || meta.payload_size != DEFAULT_MSS){
 			offset = TABLE_SIZE * DROP_INDX;
 		}
 		#endif
@@ -455,22 +436,6 @@ control MyIngress(inout headers hdr,
 		bit<TIMESTAMP_BITS> outgoing_timestamp;
 		
 		//update index by going backwards through tables
-
-		#if MULTI_TABLE > 3
-		keys.read(rflowID, meta.hash_key+TABLE_SIZE*3);
-		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE*3);
-		if(rflowID == meta.flowID && outgoing_timestamp != 0){
-			offset = TABLE_SIZE*3;
-		}
-		#endif
-
-		#if MULTI_TABLE > 2
-		keys.read(rflowID, meta.hash_key+TABLE_SIZE*2);
-		timestamps.read(outgoing_timestamp, meta.hash_key+TABLE_SIZE*2);
-		if(rflowID == meta.flowID && outgoing_timestamp != 0){
-			offset = TABLE_SIZE*2;
-		}
-		#endif
 
 		#if MULTI_TABLE > 1
 		keys.read(rflowID, meta.hash_key+TABLE_SIZE);
@@ -510,6 +475,12 @@ control MyIngress(inout headers hdr,
 		current_rtt_index.read(rtt_index, 0);
 		rtts.write(rtt_index, rtt);
 		register_indices_of_rtts.write(rtt_index, meta.hash_key + offset);
+		src_ips_of_rtts.write(rtt_index, hdr.ipv4.srcAddr);
+		dst_ips_of_rtts.write(rtt_index, hdr.ipv4.dstAddr);
+		src_ports_of_rtts.write(rtt_index, hdr.tcp.srcPort);
+		dst_ports_of_rtts.write(rtt_index, hdr.tcp.dstPort);
+		seq_nos_of_rtts.write(rtt_index, hdr.tcp.seqNo);
+		ack_nos_of_rtts.write(rtt_index, hdr.tcp.ackNo);
 		current_rtt_index.write(0, (rtt_index + 1) % MAX_NUM_RTTS);
 
 		// Set timestamp to 0
@@ -517,22 +488,38 @@ control MyIngress(inout headers hdr,
 
 	}
 	
-	
+	/* drop irrelevant packets */
 	action drop() {
 		mark_to_drop();
 	}
 	
+	/* handle ACK packets */
+	action handle_ack(){
+		push_outgoing_timestamp();
+		get_rtt();
+	}
 
-	table tcp_flag_match {
+	table tcp_flag_syn_match {
 		key = {
-			hdr.tcp.ctrl: exact;
+			hdr.tcp.syn: exact;
 		}
 		actions = {
-			push_outgoing_timestamp;
-			get_rtt;
 			#ifdef MSS_FLAG
 			push_mss;
 			#endif
+			NoAction;
+		}
+		size = 2;
+		default_action = NoAction();
+	}
+
+	table tcp_flag_ack_match {
+		key = {
+			hdr.tcp.ack: exact;
+		}
+		actions = {
+			push_outgoing_timestamp;
+			handle_ack;
 			NoAction;
 		}
 		size = 2;
@@ -564,9 +551,10 @@ control MyIngress(inout headers hdr,
 			ipv4_lpm.apply();
 		}
 		if (hdr.tcp.isValid()) {
-			if(hdr.tcp.ctrl != 4){
-				tcp_flag_match.apply();
-			}else {
+			if(hdr.tcp.rst != 1w1){
+				tcp_flag_syn_match.apply();
+				tcp_flag_ack_match.apply();
+			} else {
 				drop();
 			}
 		}

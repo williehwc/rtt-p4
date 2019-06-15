@@ -21,8 +21,7 @@ PART_I_WAIT_TIME = 39
 # Part II
 RUN_PART_II = True
 STALE = 1000000
-TABLE_SIZES_AND_NUMS_TABLES =  [(30, 2), (60, 2), (90, 2), (120,2),
-								(60, 1), (30, 2), (20, 3), (15, 4)]
+TABLE_SIZES_AND_NUMS_TABLES =  [(30, 2), (60, 2), (90, 2), (120,2)]
 # table_size, num_tables, trial_no
 PART_II_RECEIVER_CMD = "h2 ./receive.py -a 0.5 -b 0.5 -r 1 -g ii%d_n%d_t%d_r.txt &"
 PART_II_SENDER_CMD = "h1 ./multisend.py 5 ii%d_n%d_t%d_s.txt -t 100 -n 5 -m 10 -e .25 -k &"

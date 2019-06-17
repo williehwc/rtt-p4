@@ -1,6 +1,10 @@
 # Read a PCAP file and list all the flows and their RTT statistics
 # This "fast" version assumes tshark RTTs are correct and does not consider MSS.
-# Usage: python3 pcap-rtt-stats-fast.py path/to/file.pcap
+# Usage: python3 pcap-rtt-stats-fast.py path/to/file.pcap 0.1
+# Output file with flows and RTT statistics is "path/to/file.pcap.fast.csv"
+# Note: Replace 0.1 with the replay speed. Assume 1 if omitted.
+# Also outputs an actual RTTs CSV ("path/to/file.pcap.fast.rtts.csv") file with columns:
+# RTT (microsec), frame no., sip (of ACK packet), dip, spt, dpt, seq, ack, stream no.
 
 import sys, subprocess, json, statistics
 
@@ -15,9 +19,9 @@ TSHARK_COMMAND = [
     "-e", "tcp.srcport",
     "-e", "ip.dst",
     "-e", "tcp.dstport",
-    # "-e", "tcp.seq",
+    "-e", "tcp.seq",
     # "-e", "tcp.len",
-    # "-e", "tcp.ack",
+    "-e", "tcp.ack",
     # "-e", "tcp.flags.syn",
     # "-e", "tcp.flags.ack",
     # "-e", "tcp.options.mss_val",
@@ -93,11 +97,28 @@ def main():
     # Initialize object instances
     flows = Flows()
 
+    # Open RTTs file for writing
+    rtts_file = open(sys.argv[1] + '.fast.rtts.csv', "w")
+    replay_speed = 1
+    if len(sys.argv) > 2:
+        replay_speed = float(sys.argv[2])
+
     # Iterate over packet_capture
     all_packets = [preprocess_packet(pc) for pc in packet_capture]
     for this_packet in all_packets:
         if "tcp.stream" in this_packet and "tcp.analysis.ack_rtt" in this_packet:
             flows.update(this_packet)
+            rtts_file.write("%f,%d,%s,%s,%d,%d,%d,%d,%d\n" % (
+                this_packet["tcp.analysis.ack_rtt"] * 1000000 / replay_speed,
+                this_packet["frame.number"],
+                this_packet["ip.src"],
+                this_packet["ip.dst"],
+                this_packet["tcp.srcport"],
+                this_packet["tcp.dstport"],
+                this_packet["tcp.seq"],
+                this_packet["tcp.ack"],
+                this_packet["tcp.stream"]
+            ))
 
     # Write results to CSV
     with open(sys.argv[1] + '.fast.csv', "w") as csv_file:

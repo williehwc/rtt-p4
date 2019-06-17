@@ -1,5 +1,9 @@
 # Read a PCAP file and list all the flows and their RTT statistics
-# Usage: python3 pcap-rtt-stats.py path/to/file.pcap
+# Usage: python3 pcap-rtt-stats.py path/to/file.pcap 0.1
+# Output file with flows and RTT statistics is "path/to/file.pcap.csv"
+# Note: Replace 0.1 with the replay speed. Assume 1 if omitted.
+# Also outputs an actual RTTs CSV ("path/to/file.pcap.rtts.csv") file with columns:
+# RTT (microsec), frame no., sip (of ACK packet), dip, spt, dpt, seq, ack, stream no.
 
 import sys, subprocess, json, statistics
 
@@ -152,6 +156,12 @@ def main():
     packets_awaiting_ack = Packets()
     flows = Flows()
 
+    # Open RTTs file for writing
+    rtts_file = open(sys.argv[1] + '.rtts.csv', "w")
+    replay_speed = 1
+    if len(sys.argv) > 2:
+        replay_speed = float(sys.argv[2])
+
     # Iterate over packet_capture
     all_packets = [preprocess_packet(pc) for pc in packet_capture]
     packets_with_mss = [p for p in all_packets if "tcp.options.mss_val" in p and "tcp.stream" in p]
@@ -162,6 +172,19 @@ def main():
         this_rtt = packets_awaiting_ack.try_ack(this_packet)
         if this_rtt is not None:
             flows.update(this_packet, this_rtt)
+            rtts_file.write("%f,%d,%s,%s,%d,%d,%d,%d,%d\n" % (
+                this_rtt * 1000000 / replay_speed,
+                this_packet["frame.number"],
+                this_packet["ip.src"],
+                this_packet["ip.dst"],
+                this_packet["tcp.srcport"],
+                this_packet["tcp.dstport"],
+                this_packet["tcp.seq"],
+                this_packet["tcp.ack"],
+                this_packet["tcp.stream"]
+            ))
+
+    rtts_file.close()
 
     # Write results to CSV
     with open(sys.argv[1] + '.csv', "w") as csv_file:

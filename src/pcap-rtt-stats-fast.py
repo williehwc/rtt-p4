@@ -1,3 +1,5 @@
+# Update: This script has reduced RAM usage. It's slightly slower than the original
+# "fast" script (also called pcap-rtt-stats-fast.py) but isn't very noticeable.
 # Read a PCAP file and list all the flows and their RTT statistics
 # This "fast" version assumes tshark RTTs are correct and does not consider MSS.
 # Usage: python3 pcap-rtt-stats-fast.py path/to/file.pcap 0.1
@@ -6,7 +8,8 @@
 # Also outputs an actual RTTs CSV ("path/to/file.pcap.fast.rtts.csv") file with columns:
 # RTT (microsec), frame no., sip (of ACK packet), dip, spt, dpt, seq, ack, stream no.
 
-import sys, subprocess, json, statistics
+import sys, subprocess, statistics
+import ijson.backends.yajl2_c as ijson
 
 TSHARK_COMMAND = [
     "tshark",
@@ -90,9 +93,11 @@ def main():
     tshark_result = subprocess.run(TSHARK_COMMAND, stdout=subprocess.PIPE)
     with open(sys.argv[1] + '.fast.json', 'wb') as json_file:
         json_file.write(tshark_result.stdout)
+    del tshark_result
 
     # Read the JSON
-    packet_capture = json.loads(tshark_result.stdout.decode("utf-8"))
+    json_file = open(sys.argv[1] + '.fast.json', 'rb')
+    packet_capture = ijson.items(json_file, "item")
 
     # Initialize object instances
     flows = Flows()
@@ -104,8 +109,8 @@ def main():
         replay_speed = float(sys.argv[2])
 
     # Iterate over packet_capture
-    all_packets = [preprocess_packet(pc) for pc in packet_capture]
-    for this_packet in all_packets:
+    for pc in packet_capture:
+        this_packet = preprocess_packet(pc)
         if "tcp.stream" in this_packet and "tcp.analysis.ack_rtt" in this_packet:
             flows.update(this_packet)
             rtts_file.write("%f,%d,%s,%s,%d,%d,%d,%d,%d\n" % (

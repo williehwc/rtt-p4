@@ -23,33 +23,17 @@ TSHARK_COMMAND = [
     "-e", "tcp.ack",
     "-e", "tcp.flags.syn",
     "-e", "tcp.flags.ack",
-    "-e", "tcp.options.mss_val",
     "-e", "tcp.analysis.ack_rtt",
     "-e", "tcp.analysis.initial_rtt",
     "-e", "frame.time_epoch"
 ]
 
-DEFAULT_MSS = 1460
-
-def lookup_mss(packet, packets_with_mss):
-    for p in packets_with_mss:
-        if  packet["tcp.stream"] == p["tcp.stream"] \
-        and packet["ip.src"] == p["ip.src"] \
-        and packet["ip.dst"] == p["ip.dst"] \
-        and packet["tcp.srcport"] == p["tcp.srcport"] \
-        and packet["tcp.dstport"] == p["tcp.dstport"]:
-            # print("Found MSS of", p["tcp.options.mss_val"], "for packet",
-            #     packet["frame.number"], "in packet", p["frame.number"])
-            return p["tcp.options.mss_val"]
-    # print("Couldn't find MSS for packet", packet["frame.number"], "– assuming default of", DEFAULT_MSS)
-    return DEFAULT_MSS
-
 class Packets:
     def __init__(self):
         self.packets = dict()
-    def try_append(self, packet, packets_with_mss):
+    def try_append(self, packet):
         try:
-            if int(packet["tcp.len"]) >= lookup_mss(packet, packets_with_mss):
+            if int(packet["tcp.len"]) > 0:
                 expected_ack = packet["tcp.seq"] + packet["tcp.len"]
                 if packet["tcp.flags.syn"] == 1:
                     expected_ack += 1
@@ -164,11 +148,10 @@ def main():
 
     # Iterate over packet_capture
     all_packets = [preprocess_packet(pc) for pc in packet_capture]
-    packets_with_mss = [p for p in all_packets if "tcp.options.mss_val" in p and "tcp.stream" in p]
     for this_packet in all_packets:
         if "tcp.stream" not in this_packet:
             continue
-        packets_awaiting_ack.try_append(this_packet, packets_with_mss)
+        packets_awaiting_ack.try_append(this_packet)
         this_rtt = packets_awaiting_ack.try_ack(this_packet)
         if this_rtt is not None:
             flows.update(this_packet, this_rtt)

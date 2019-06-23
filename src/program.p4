@@ -14,8 +14,8 @@
 /*use to toggle support for deterministic subsampling */
 #define SUBSAMPLE_FLAG
 
-/* use to toggle support for cumulative ACKs */
-#define MSS_FLAG 
+/* use to toggle support to avoid counting delayed ACKs */
+// #define MSS_FLAG
 
 /* define the number of tables MULTI_TABLE == 2 */
 #define MULTI_TABLE 2
@@ -299,7 +299,7 @@ control MyIngress(inout headers hdr,
 		
 	}
 
-	#ifdef MSS_FLAG	
+	#ifdef MSS_FLAG
 	/* set the 4 tuple for the maximum segment size storing register */
 	action set_mssID(){
 		meta.mssID = hdr.ipv4.dstAddr ++ hdr.ipv4.srcAddr ++ hdr.tcp.dstPort ++ hdr.tcp.srcPort;
@@ -313,17 +313,20 @@ control MyIngress(inout headers hdr,
 			{meta.mssID},
 			MSS_TABLE_SIZE);		
 	}
+	#endif
+
 	/* set MSS for SYN packets for each 4 tuple */
 	/* ideally we would have perfect hashing or dynamic hash table, because the MSS value is necessary
 		for proper operation of the rest of this approach.
 	*/
 	action push_mss(){
+		#ifdef MSS_FLAG
 		set_mssID();
 		set_mss_key();
 		
 		four_tuple_mss_table.write(meta.mss_key, hdr.mss.mss);
+		#endif
 	}
-	#endif
 
 
 	#ifdef SUBSAMPLE_FLAG
@@ -406,6 +409,11 @@ control MyIngress(inout headers hdr,
 		bit<16> mss;
 		four_tuple_mss_table.read(mss, meta.mss_key);
 		if((mss != 16w0 && meta.payload_size != (bit<32>) mss) || meta.payload_size != DEFAULT_MSS){
+			offset = TABLE_SIZE * DROP_INDX;
+		}
+		#else
+		//only allow packets with at least a byte of payload
+		if(meta.payload_size == 32w0){
 			offset = TABLE_SIZE * DROP_INDX;
 		}
 		#endif
@@ -504,9 +512,7 @@ control MyIngress(inout headers hdr,
 			hdr.tcp.syn: exact;
 		}
 		actions = {
-			#ifdef MSS_FLAG
 			push_mss;
-			#endif
 			NoAction;
 		}
 		size = 2;

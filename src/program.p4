@@ -115,6 +115,16 @@ header tcp_t {
 	bit<16> urgentPtr;
 }
 
+#ifdef STAT_PACKET
+header udp_pay_t {
+    bit<16> srcPort;
+    bit<16> dstPort;
+    bit<16> length;
+    bit<16> checksum;
+	bit<FLOWID_BITS> flowID;
+	bit<TIMESTAMP_BITS> timestamp;
+}
+#endif
 
 #ifdef MSS_FLAG
 /* TCP Options */
@@ -155,6 +165,9 @@ struct headers {
 	ethernet_t   ethernet;
 	ipv4_t	   ipv4;
 	tcp_t		tcp;
+	#ifdef STAT_PACKET
+	udp_pay_t udp;
+	#endif
 	#ifdef MSS_FLAG
 	tcp_mss_option_t mss;
 	#endif
@@ -488,6 +501,11 @@ control MyIngress(inout headers hdr,
 
 	}
 	
+	#ifdef STAT_PACKET
+	action set_payload() {
+		
+	}
+	#endif
 	/* drop irrelevant packets */
 	action drop() {
 		mark_to_drop();
@@ -603,10 +621,14 @@ control MyDeparser(packet_out packet, in headers hdr) {
 	apply {
 		packet.emit(hdr.ethernet);
 		packet.emit(hdr.ipv4);
+		#ifdef STAT_PACKET
+		packet.emit(hdr.udp)
+		#else
 		packet.emit(hdr.tcp);
 		#ifdef MSS_FLAG
 		packet.emit(hdr.mss);
-		#endif
+		#endif //MSS_FLAG
+		#endif //STAT_PACKET
 	}
 }
 

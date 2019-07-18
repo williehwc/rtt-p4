@@ -20,6 +20,9 @@
 /* define the number of tables MULTI_TABLE == 2 */
 #define MULTI_TABLE 2
 
+/* if using UDP to send stat packet */
+#define STAT_PACKET
+
 /* if tracking MSS */
 #ifdef MSS_FLAG
 /* size of MSS */
@@ -122,7 +125,7 @@ header udp_pay_t {
     bit<16> length;
     bit<16> checksum;
 	bit<FLOWID_BITS> flowID;
-	bit<TIMESTAMP_BITS> timestamp;
+	bit<TIMESTAMP_BITS> rtt;
 }
 #endif
 
@@ -361,7 +364,17 @@ control MyIngress(inout headers hdr,
 	}
 	#endif
 	
-
+	#ifdef STAT_PACKET
+	action set_udp_payload(bit<TIMESTAMP_BITS> rtt) {
+		hdr.udp.srcPort = hdr.tcp.srcPort;
+		hdr.udp.dstPort = hdr.tcp.dstPort;
+		hdr.udp.length = 8 + FLOWID_BITS + TIMESTAMP_BITS;
+		hdr.udp.checksum = 16w0;
+		hdr.udp.flowID = meta.flowID;
+		hdr.udp.rtt = rtt;
+		
+	}
+	#endif
 	/* push timestamp into tables with hashed key as index */
 	action push_outgoing_timestamp(){
 		set_payload_size();
@@ -498,14 +511,14 @@ control MyIngress(inout headers hdr,
 
 		// Set timestamp to 0
 		timestamps.write(meta.hash_key + offset, 0);
+		
+		#ifdef STAT_PACKET
+		set_udp_payload(rtt);
+		#endif
+		
 
 	}
 	
-	#ifdef STAT_PACKET
-	action set_payload() {
-		
-	}
-	#endif
 	/* drop irrelevant packets */
 	action drop() {
 		mark_to_drop();
@@ -622,7 +635,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
 		packet.emit(hdr.ethernet);
 		packet.emit(hdr.ipv4);
 		#ifdef STAT_PACKET
-		packet.emit(hdr.udp)
+		packet.emit(hdr.udp);
 		#else
 		packet.emit(hdr.tcp);
 		#ifdef MSS_FLAG

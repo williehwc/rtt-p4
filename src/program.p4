@@ -6,7 +6,7 @@
 #include <core.p4>
 #include <v1model.p4>
 
-/* size of timestamp (milliseconds) */
+/* size of timestamp (microseconds) */
 #define TIMESTAMP_BITS 48
 /* size of flow_id */
 #define FLOWID_BITS 128

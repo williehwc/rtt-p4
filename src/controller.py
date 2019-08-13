@@ -1,16 +1,37 @@
 #!/usr/bin/env python2
+# Encoding: utf-8
 
 # Usage: ./legacy-controller.py -r > path/to/observed_rtts_filename.csv
 # Output columns:
 # RTT (microsec), register index of RTT, sip (of ACK packet), dip, spt, dpt, seq, ack
 
 from __future__ import print_function
-import sys, time, pexpect, re, socket, argparse
+import sys, time, pexpect, re, socket, argparse, math
 
 TABLE_SIZE = 120
 NUM_TABLES = 2
 
 INITIAL_FILTER_PERCENT = 0
+
+## http://code.activestate.com/recipes/511478/
+def percentile(N, percent, key=lambda x:x):
+    """
+    Find the percentile of a list of values.
+    @parameter N - is a list of values. Note N MUST BE already sorted.
+    @parameter percent - a float value from 0.0 to 1.0.
+    @parameter key - optional key function to compute value from each element of N.
+    @return - the percentile of the values
+    """
+    if not N:
+        return None
+    k = (len(N)-1) * percent
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return key(N[int(k)])
+    d0 = key(N[int(f)]) * (c-k)
+    d1 = key(N[int(c)]) * (k-f)
+    return d0+d1
 
 def int_to_ip(ip):
     # Convert int to IP address: https://stackoverflow.com/questions/5619685/    
@@ -48,8 +69,6 @@ def main(args):
         current_seq_nos_of_rtts_thrift_output = run_thrift_command(thrift, 'register_read seq_nos_of_rtts')
         current_ack_nos_of_rtts_thrift_output = run_thrift_command(thrift, 'register_read ack_nos_of_rtts')
         current_timestamps_thrift_output = run_thrift_command(thrift, 'register_read timestamps')
-        current_latency_threshold_thrift_output = run_thrift_command(thrift, 'register_read latency_threshold')
-        #current_filter_percent_thrift_output = run_thrift_command(thrift, 'register_read filter_percent')
         # Issue reset commands
         run_thrift_command(thrift, 'register_reset rtts')
         run_thrift_command(thrift, 'register_reset register_indices_of_rtts')
@@ -92,8 +111,21 @@ def main(args):
         for i in range(NUM_TABLES):
             occupancy = len([t for t in current_timestamps[(i*TABLE_SIZE):((i+1)*TABLE_SIZE)] if t != 0])
             occupancies.append(occupancy)
-        # Chceck tuning parameters
+        # Autotuning
+        if args.auto_tune_stale_threshold_percentile is not None:
+            eligible_rtts = rtts
+            if args.auto_tune_num_recent_rtts == 0:
+                eligible_rtts = [x[0] for x in new_rtts_etc]
+            elif args.auto_tune_num_recent_rtts is not None:
+                eligible_rtts = rtts[(-1 * args.auto_tune_num_recent_rtts):]
+            eligible_rtts.sort()
+            new_stale = int(percentile(filter(lambda x: x < args.max_stale_rtt, eligible_rtts),
+                args.auto_tune_stale_threshold_percentile / 100))
+            run_thrift_command(thrift, 'register_write latency_threshold 0 ' + str(new_stale))
+        # Check tuning parameters
+        current_latency_threshold_thrift_output = run_thrift_command(thrift, 'register_read latency_threshold')
         current_latency_threshold = parse_thrift_register(current_latency_threshold_thrift_output)[0]
+        #current_filter_percent_thrift_output = run_thrift_command(thrift, 'register_read filter_percent')
         #current_filter_percent = parse_thrift_register(current_filter_percent_thrift_output)[0]
         # Print statistics
         if args.threshold > 0:
@@ -112,7 +144,8 @@ def main(args):
             for new_rtt_etc in new_rtts_etc:
                 print("%d,%d,%s,%s,%d,%d,%d,%d" % new_rtt_etc)
             if args.print_register_occupancy:
-                print(occupancies, "(Recorded", len(rtts), "RTTs)", file=sys.stderr)
+                print(occupancies, "(Recorded", len(rtts), "RTTs, stale",
+                    current_latency_threshold, "µs)", file=sys.stderr)
 
 def premain():
     parser = argparse.ArgumentParser(description='Controller for RTT-P4')
@@ -125,17 +158,17 @@ def premain():
     parser.add_argument('-i', '--initial', dest='initial_stale_threshold', type=int,
         help='Initial stale threshold in microseconds (default 500000)',
         action="store", required=False, default=500000)
-    # parser.add_argument('-a', '--auto', dest='auto_tune_stale_threshold_percentile', type=int,
-    #     help='Autotune stale threshold percentile (0 to 100 inclusive)',
-    #     action="store", required=False, default=None)
-    # parser.add_argument('-l', '--last', dest='auto_tune_num_recent_rtts', type=int,
-    #     help='Number of most recent RTTs to consider when autotuning stale threshold (0 means last batch)',
-    #     action="store", required=False, default=None)
-    # parser.add_argument('-m', '--max', dest='max_stale_rtt', type=int,
-    #     help='Maximum stale RTT in microseconds',
-    #     action="store", required=False, default=1000000)
+    parser.add_argument('-a', '--auto', dest='auto_tune_stale_threshold_percentile', type=int,
+        help='Autotune stale threshold percentile (0 to 100 inclusive)',
+        action="store", required=False, default=None)
+    parser.add_argument('-l', '--last', dest='auto_tune_num_recent_rtts', type=int,
+        help='Number of most recent RTTs to consider when autotuning stale threshold (0 means last batch)',
+        action="store", required=False, default=None)
+    parser.add_argument('-m', '--max', dest='max_stale_rtt', type=int,
+        help='Maximum stale RTT in microseconds',
+        action="store", required=False, default=1000000)
     parser.add_argument('-p', '--print', dest='print_register_occupancy',
-        help='Print occupancy of registers',
+        help='Always print occupancy of registers and other stats',
         action="store_true", required=False)
     parser.add_argument('-s', '--sleep', dest='sleep', type=int,
         help='Sleep duration (refresh rate) in seconds (default is 5)',

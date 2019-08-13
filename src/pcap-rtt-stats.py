@@ -135,6 +135,7 @@ def main():
 
     # Read the JSON
     packet_capture = json.loads(tshark_result.stdout.decode("utf-8"))
+    del tshark_result
 
     # Initialize object instances
     packets_awaiting_ack = Packets()

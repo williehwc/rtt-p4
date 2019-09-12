@@ -125,15 +125,15 @@ header udp_pay_t {
     bit<4> version;
     bit<4> ihl;
     bit<8> diffserv;
-    bit<16> total_len;
+    bit<16> totalLen;
     bit<16> identification;
     bit<3> flags;
     bit<13> frag_offset;
     bit<8> ttl;
     bit<8> protocol;
     bit<16> hdr_checksum;
-    ipv4_addr_t src_addr;
-    ipv4_addr_t dst_addr;
+    ip4Addr_t src_addr;
+    ip4Addr_t dst_addr;
 	//UDP
     bit<16> srcPort;
     bit<16> dstPort;
@@ -184,7 +184,7 @@ struct headers {
 	ipv4_t	   ipv4;
 	tcp_t		tcp;
 	#ifdef STAT_PACKET
-	udp_pay_t udp;
+	udp_pay_t stat;
 	#endif
 	#ifdef MSS_FLAG
 	tcp_mss_option_t mss;
@@ -246,10 +246,17 @@ parser MyParser(packet_in packet,
 		packet.extract(hdr.ethernet);
 		transition select(hdr.ethernet.etherType) {
 			TYPE_IPV4: parse_ipv4;
+			#ifdef STAT_PACKET
+			0x0000 : parse_stat;
+			#endif
 			default: accept;
 		}
 	}
 
+	state parse_stat{
+		packet.extract(hdr.stat);
+		transition parse_ipv4;
+	}
 	/* parse ipv4 header */
 	state parse_ipv4 {
 		packet.extract(hdr.ipv4);
@@ -381,12 +388,22 @@ control MyIngress(inout headers hdr,
 	
 	#ifdef STAT_PACKET
 	action set_udp_payload(bit<TIMESTAMP_BITS> rtt) {
-		hdr.udp.srcPort = hdr.tcp.srcPort;
-		hdr.udp.dstPort = hdr.tcp.dstPort;
-		hdr.udp.length = 8 + FLOWID_BITS + TIMESTAMP_BITS;
-		hdr.udp.checksum = 16w0;
-		hdr.udp.flowID = meta.flowID;
-		hdr.udp.rtt = rtt;
+        hdr.stat.setValid();
+        //ip
+        hdr.stat.version=4;
+        hdr.stat.ihl=5;
+        hdr.stat.diffserv=0;
+        hdr.stat.totalLen=hdr.ipv4.totalLen + 20 + 8 + 8;//+ipv4 + udp + payload
+        hdr.stat.ttl=64;
+        hdr.stat.protocol=17;
+        hdr.stat.src_addr=0x0a000001;
+        hdr.stat.src_addr=0x0a000002;
+		hdr.stat.srcPort = hdr.tcp.srcPort;
+		hdr.stat.dstPort = hdr.tcp.dstPort;
+		hdr.stat.length = 8 + FLOWID_BITS + TIMESTAMP_BITS;
+		hdr.stat.checksum = 16w0;
+		hdr.stat.flowID = meta.flowID;
+		hdr.stat.rtt = rtt;
 		
 	}
 	#endif
@@ -650,7 +667,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
 		packet.emit(hdr.ethernet);
 		packet.emit(hdr.ipv4);
 		#ifdef STAT_PACKET
-		packet.emit(hdr.udp);
+		packet.emit(hdr.stat);
 		#else
 		packet.emit(hdr.tcp);
 		#ifdef MSS_FLAG

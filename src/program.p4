@@ -668,12 +668,12 @@ control MyDeparser(packet_out packet, in headers hdr) {
 		packet.emit(hdr.ipv4);
 		#ifdef STAT_PACKET
 		packet.emit(hdr.stat);
-		#else
+		#endif //STAT_PACKET
 		packet.emit(hdr.tcp);
 		#ifdef MSS_FLAG
 		packet.emit(hdr.mss);
 		#endif //MSS_FLAG
-		#endif //STAT_PACKET
+
 	}
 }
 

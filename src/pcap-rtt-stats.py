@@ -5,7 +5,7 @@
 # Also outputs an actual RTTs CSV ("path/to/file.pcap.rtts.csv") file with columns:
 # RTT (microsec), frame no., sip (of ACK packet), dip, spt, dpt, seq, ack, stream no.
 
-import sys, subprocess, json, statistics
+import sys, subprocess, json, statistics, math
 
 TSHARK_COMMAND = [
     "tshark",
@@ -31,23 +31,28 @@ TSHARK_COMMAND = [
 class Packets:
     def __init__(self):
         self.packets = dict()
+        self.warnings = []
     def try_append(self, packet):
         try:
             if int(packet["tcp.len"]) > 0:
                 expected_ack = packet["tcp.seq"] + packet["tcp.len"]
                 if packet["tcp.flags.syn"] == 1:
                     expected_ack += 1
-                self.packets["%d,%s,%s,%d,%d,%d" % (
+                key = "%d,%s,%s,%d,%d,%d" % (
                     packet["tcp.stream"],
                     packet["ip.src"],
                     packet["ip.dst"],
                     packet["tcp.srcport"],
                     packet["tcp.dstport"],
                     expected_ack
-                )] = {
-                    "frame.time_epoch": packet["frame.time_epoch"],
-                    "frame.number": packet["frame.number"]
-                }
+                )
+                if key in self.packets:
+                    self.warnings.append(str(packet["frame.number"]) + " also has key " + key)
+                else:
+                    self.packets[key] = {
+                        "frame.time_epoch": packet["frame.time_epoch"],
+                        "frame.number": packet["frame.number"]
+                    }
         except:
             pass
     def try_ack(self, new_packet):
@@ -67,8 +72,11 @@ class Packets:
                 expected_rtt = -1
                 if "tcp.analysis.ack_rtt" in new_packet:
                     expected_rtt = new_packet["tcp.analysis.ack_rtt"]
-                print(new_packet["frame.number"], "acks", packet["frame.number"], "with actual RTT",
-                    rtt, "–", expected_rtt, "sec expected")
+                message = str(new_packet["frame.number"]) + " acks " + str(packet["frame.number"]) + \
+                    " with actual RTT " + str(rtt) + " – " + str(expected_rtt) + " sec expected"
+                print(message)
+                if not math.isclose(rtt, expected_rtt, abs_tol=1e-6):
+                    self.warnings.append(message)
                 return rtt
         return None
 
@@ -173,5 +181,10 @@ def main():
     # Write results to CSV
     with open(sys.argv[1] + '.csv', "w") as csv_file:
         flows.to_csv(csv_file)
+    
+    # Print warnings
+    print("=== WARNINGS BELOW, IF ANY ===")
+    for warning in packets_awaiting_ack.warnings:
+        print(warning)
 
 main()

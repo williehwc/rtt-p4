@@ -7,7 +7,7 @@
 # Also outputs an actual RTTs CSV ("path/to/file.pcap.rtts.csv") file with columns:
 # RTT (microsec), frame no., sip (of ACK packet), dip, spt, dpt, seq, ack, stream no.
 
-import sys, subprocess, statistics
+import sys, subprocess, statistics, math
 import ijson.backends.yajl2_c as ijson
 
 TSHARK_COMMAND = [
@@ -34,6 +34,7 @@ TSHARK_COMMAND = [
 class Packets:
     def __init__(self):
         self.packets = dict()
+        self.warnings = []
     def try_append(self, packet):
         try:
             if int(packet["tcp.len"]) > 0:
@@ -70,8 +71,11 @@ class Packets:
                 expected_rtt = -1
                 if "tcp.analysis.ack_rtt" in new_packet:
                     expected_rtt = new_packet["tcp.analysis.ack_rtt"]
-                print(new_packet["frame.number"], "acks", packet["frame.number"], "with actual RTT",
-                    rtt, "–", expected_rtt, "sec expected")
+                message = str(new_packet["frame.number"]) + " acks " + str(packet["frame.number"]) + \
+                    " with actual RTT " + str(rtt) + " – " + str(expected_rtt) + " sec expected"
+                print(message)
+                if not math.isclose(rtt, expected_rtt, abs_tol=1e-6):
+                    self.warnings.append(message)
                 return rtt
         return None
 
@@ -177,5 +181,10 @@ def main():
     # Write results to CSV
     with open(sys.argv[1] + '.csv', "w") as csv_file:
         flows.to_csv(csv_file)
+
+    # Print warnings
+    print("=== WARNINGS BELOW, IF ANY ===")
+    for warning in packets_awaiting_ack.warnings:
+        print(warning)
 
 main()

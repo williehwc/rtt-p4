@@ -5,7 +5,7 @@
 # Also outputs an actual RTTs CSV ("path/to/file.pcap.rtts.csv") file with columns:
 # RTT (microsec), frame no., sip (of ACK packet), dip, spt, dpt, seq, ack, stream no.
 
-import sys, subprocess, json, statistics, math
+import sys, subprocess, json, statistics, math, os
 
 TSHARK_COMMAND = [
     "tshark",
@@ -25,7 +25,8 @@ TSHARK_COMMAND = [
     "-e", "tcp.flags.ack",
     "-e", "tcp.analysis.ack_rtt",
     "-e", "tcp.analysis.initial_rtt",
-    "-e", "frame.time_epoch"
+    "-e", "frame.time_epoch",
+    "-o", "tcp.relative_sequence_numbers:FALSE"
 ]
 
 class Packets:
@@ -57,7 +58,7 @@ class Packets:
             pass
     def try_ack(self, new_packet):
         # Criteria: IP address, ports, and stream number match. Also, ACK = SEQ + LEN
-        if new_packet["tcp.flags.ack"] == 1:
+        if "tcp.flags.ack" in new_packet and new_packet["tcp.flags.ack"] == 1:
             key = "%d,%s,%s,%d,%d,%d" % (
                 new_packet["tcp.stream"],
                 new_packet["ip.dst"],
@@ -136,10 +137,19 @@ def preprocess_packet(pc):
     return packet
 
 def main():
+    # Check if sys.argv[3] (output path) is specified
+    out_filename = sys.argv[1]
+    if len(sys.argv) > 3:
+        if (sys.argv[3]).endswith("/") or (sys.argv[3]).endswith("\\"):
+            print("Remove final slash from output path")
+            sys.exit(1)
+        out_filename = sys.argv[3] + "/" + os.path.basename(sys.argv[1])
+
     # Run tshark to generate the JSON
     tshark_result = subprocess.run(TSHARK_COMMAND, stdout=subprocess.PIPE)
-    with open(sys.argv[1] + '.json', 'wb') as json_file:
-        json_file.write(tshark_result.stdout)
+    if len(sys.argv) > 2 and "!" in sys.argv[2]:
+        with open(out_filename + '.json', 'wb') as json_file:
+            json_file.write(tshark_result.stdout)
 
     # Read the JSON
     packet_capture = json.loads(tshark_result.stdout.decode("utf-8"))
@@ -150,10 +160,10 @@ def main():
     flows = Flows()
 
     # Open RTTs file for writing
-    rtts_file = open(sys.argv[1] + '.rtts.csv', "w")
+    rtts_file = open(out_filename + '.rtts.csv', "w")
     replay_speed = 1
     if len(sys.argv) > 2:
-        replay_speed = float(sys.argv[2])
+        replay_speed = float((sys.argv[2]).replace('!', ''))
 
     # Iterate over packet_capture
     all_packets = [preprocess_packet(pc) for pc in packet_capture]
@@ -179,7 +189,7 @@ def main():
     rtts_file.close()
 
     # Write results to CSV
-    with open(sys.argv[1] + '.csv', "w") as csv_file:
+    with open(out_filename + '.csv', "w") as csv_file:
         flows.to_csv(csv_file)
     
     # Print warnings

@@ -8,7 +8,7 @@
 # Also outputs an actual RTTs CSV ("path/to/file.pcap.fast.rtts.csv") file with columns:
 # RTT (microsec), frame no., sip (of ACK packet), dip, spt, dpt, seq, ack, stream no.
 
-import sys, subprocess, statistics
+import sys, subprocess, statistics, os
 import ijson.backends.yajl2_c as ijson
 
 TSHARK_COMMAND = [
@@ -30,7 +30,8 @@ TSHARK_COMMAND = [
     # "-e", "tcp.options.mss_val",
     "-e", "tcp.analysis.ack_rtt",
     "-e", "tcp.analysis.initial_rtt",
-    # "-e", "frame.time_epoch"
+    # "-e", "frame.time_epoch",
+    "-o", "tcp.relative_sequence_numbers:FALSE"
 ]
 
 class Flows:
@@ -89,24 +90,32 @@ def preprocess_packet(pc):
     return packet
 
 def main():
+    # Check if sys.argv[3] (output path) is specified
+    out_filename = sys.argv[1]
+    if len(sys.argv) > 3:
+        if (sys.argv[3]).endswith("/") or (sys.argv[3]).endswith("\\"):
+            print("Remove final slash from output path")
+            sys.exit(1)
+        out_filename = sys.argv[3] + "/" + os.path.basename(sys.argv[1])
+
     # Run tshark to generate the JSON
     tshark_result = subprocess.run(TSHARK_COMMAND, stdout=subprocess.PIPE)
-    with open(sys.argv[1] + '.fast.json', 'wb') as json_file:
+    with open(out_filename + '.fast.json', 'wb') as json_file:
         json_file.write(tshark_result.stdout)
     del tshark_result
 
     # Read the JSON
-    json_file = open(sys.argv[1] + '.fast.json', 'rb')
+    json_file = open(out_filename + '.fast.json', 'rb')
     packet_capture = ijson.items(json_file, "item")
 
     # Initialize object instances
     flows = Flows()
 
     # Open RTTs file for writing
-    rtts_file = open(sys.argv[1] + '.fast.rtts.csv', "w")
+    rtts_file = open(out_filename + '.fast.rtts.csv', "w")
     replay_speed = 1
     if len(sys.argv) > 2:
-        replay_speed = float(sys.argv[2])
+        replay_speed = float((sys.argv[2]).replace('!', ''))
 
     # Iterate over packet_capture
     for pc in packet_capture:
@@ -126,7 +135,7 @@ def main():
             ))
 
     # Write results to CSV
-    with open(sys.argv[1] + '.fast.csv', "w") as csv_file:
+    with open(out_filename + '.fast.csv', "w") as csv_file:
         flows.to_csv(csv_file)
 
 main()

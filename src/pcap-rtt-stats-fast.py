@@ -8,31 +8,33 @@
 # Also outputs an actual RTTs CSV ("path/to/file.pcap.fast.rtts.csv") file with columns:
 # RTT (microsec), frame no., sip (of ACK packet), dip, spt, dpt, seq, ack, stream no.
 
-import sys, subprocess, statistics, os
-import ijson.backends.yajl2_c as ijson
+import sys, subprocess, statistics, os, csv
 
-TSHARK_COMMAND = [
+TSHARK_COMMAND_WITHOUT_FIELDS = [
     "tshark",
     "-r", sys.argv[1],
     "-j", "tcp",
-    "-T", "json",
-    "-e", "frame.number",
-    "-e", "tcp.stream",
-    "-e", "ip.src",
-    "-e", "tcp.srcport",
-    "-e", "ip.dst",
-    "-e", "tcp.dstport",
-    "-e", "tcp.seq",
-    # "-e", "tcp.len",
-    "-e", "tcp.ack",
-    # "-e", "tcp.flags.syn",
-    # "-e", "tcp.flags.ack",
-    # "-e", "tcp.options.mss_val",
-    "-e", "tcp.analysis.ack_rtt",
-    "-e", "tcp.analysis.initial_rtt",
-    # "-e", "frame.time_epoch",
+    "-T", "fields",
     "-o", "tcp.relative_sequence_numbers:FALSE"
 ]
+
+FIELDS = [
+    "frame.number",
+    "tcp.stream",
+    "ip.src",
+    "tcp.srcport",
+    "ip.dst",
+    "tcp.dstport",
+    "tcp.seq",
+    "tcp.ack",
+    "tcp.analysis.ack_rtt",
+    "tcp.analysis.initial_rtt"
+]
+
+# Complete the tshark command
+tshark_command = TSHARK_COMMAND_WITHOUT_FIELDS
+for field in FIELDS:
+    tshark_command.extend(["-e", field])
 
 class Flows:
     def __init__(self):
@@ -78,15 +80,16 @@ class Flows:
             )
 
 def preprocess_packet(pc):
-    packet = pc["_source"]["layers"]
-    for key in packet:
-        try:
-            packet[key] = int(packet[key][0])
-        except:
+    packet = dict()
+    for i, field in enumerate(FIELDS):
+        if pc[i] != "":
             try:
-                packet[key] = float(packet[key][0])
+                packet[field] = int(pc[i])
             except:
-                packet[key] = packet[key][0]
+                try:
+                    packet[field] = float(pc[i])
+                except:
+                    packet[field] = pc[i]
     return packet
 
 def main():
@@ -98,15 +101,15 @@ def main():
             sys.exit(1)
         out_filename = sys.argv[3] + "/" + os.path.basename(sys.argv[1])
 
-    # Run tshark to generate the JSON
-    tshark_result = subprocess.run(TSHARK_COMMAND, stdout=subprocess.PIPE)
-    with open(out_filename + '.fast.json', 'wb') as json_file:
-        json_file.write(tshark_result.stdout)
+    # Run tshark to generate the tsv
+    tshark_result = subprocess.run(tshark_command, stdout=subprocess.PIPE)
+    with open(out_filename + '.fast.tsv', 'wb') as tsv_file:
+        tsv_file.write(tshark_result.stdout)
     del tshark_result
 
-    # Read the JSON
-    json_file = open(out_filename + '.fast.json', 'rb')
-    packet_capture = ijson.items(json_file, "item")
+    # Read the TSV
+    tsv_file = open(out_filename + '.fast.tsv')
+    packet_capture = csv.reader(tsv_file, delimiter='\t')
 
     # Initialize object instances
     flows = Flows()
